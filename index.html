@@ -275,13 +275,6 @@
     50%{ transform: scale(1.35); opacity: 1; }
   }
 
-  /* ---------- прогресс-бар ---------- */
-  .progress-row{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 22px;
-  }
   .time{
     font-size: 11px;
     color: var(--text-dim);
@@ -790,19 +783,9 @@
             </div>
           </section>
 
-          <!-- ====== ПРОГРЕСС-БАР ====== -->
-          <section class="progress-row">
-            <span class="time" id="timeCurrent">0:00</span>
-            <div class="progress-track" id="progressTrack">
-              <div class="progress-fill" id="progressFill"></div>
-              <div class="progress-handle" id="progressHandle"></div>
-            </div>
-            <span class="time" id="timeDuration">0:00</span>
-          </section>
-
           <!-- ====== КНОПКИ УПРАВЛЕНИЯ ====== -->
           <section class="controls">
-            <button class="ctrl-btn" id="prevBtn" title="Предыдущий трек" aria-label="Предыдущий трек">
+            <button class="ctrl-btn" id="prevBtn" title="Предыдущая станция" aria-label="Предыдущая станция">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
             </button>
 
@@ -810,18 +793,18 @@
               <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             </button>
 
-            <button class="ctrl-btn" id="nextBtn" title="Следующий трек" aria-label="Следующий трек">
+            <button class="ctrl-btn" id="nextBtn" title="Следующая станция" aria-label="Следующая станция">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z"/></svg>
             </button>
           </section>
 
         </div>
 
-        <!-- ====== ПРАВАЯ КОЛОНКА: ПЛЕЙЛИСТ НА ВСЮ ВЫСОТУ ====== -->
+        <!-- ====== ПРАВАЯ КОЛОНКА: СПИСОК СТАНЦИЙ НА ВСЮ ВЫСОТУ ====== -->
         <div class="playlist-panel">
           <div class="playlist-header">
-            <h2>Плейлист</h2>
-            <span class="count" id="playlistCount">8 треков</span>
+            <h2>Радиостанции</h2>
+            <span class="count" id="playlistCount">16 станций</span>
           </div>
           <ul class="playlist" id="playlist"></ul>
         </div>
@@ -836,7 +819,7 @@
     <div class="modal glass">
       <span class="modal-icon">🌤️</span>
       <h3>Сменить вайб?</h3>
-      <p>Ты слушаешь уже 5 грустных треков подряд. Может, включить что-то бодрое?</p>
+      <p>Ты слушаешь уже 5 грустных радиостанций подряд. Может, включить что-то бодрое?</p>
       <div class="modal-buttons">
         <button class="btn-yes" id="btnYes">Да, хочу</button>
         <button class="btn-no" id="btnNo">Нет, оставь</button>
@@ -847,16 +830,16 @@
   <div class="toast" id="toast"></div>
 
   <!-- Диагностический баннер: появляется, только если подряд не смогли
-       загрузиться несколько треков — типичный признак того, что браузер
-       (чаще всего Safari) блокирует локальному HTML-файлу доступ к
-       соседним файлам. Объясняем причину и как это исправить, вместо
-       того чтобы плеер молча листал треки один за другим по кругу. -->
+       подключиться несколько радиостанций — обычно это проблема сети
+       (нет интернета, блокировка стриминга файрволом/VPN, рекламный
+       блокировщик режет аудиопотоки, или конкретная станция временно
+       недоступна). Объясняем причину, вместо того чтобы плеер молча
+       листал станции одну за другой по кругу. -->
   <div class="load-error-banner" id="loadErrorBanner">
     <button class="close-banner" id="closeLoadErrorBanner" aria-label="Закрыть">✕</button>
-    <h4>⚠️ Треки не загружаются</h4>
-    <p>Браузер блокирует доступ к локальным аудиофайлам. Чаще всего это Safari — он по умолчанию запрещает HTML-странице, открытой с диска, читать соседние файлы.</p>
-    <p><b>Проще всего:</b> открыть этот файл в Chrome — там всё работает без настроек.</p>
-    <p><b>Или в Safari:</b> Safari → Настройки → Дополнения → включить «Показывать меню Разработка», затем в меню Разработка выбрать «Отключить ограничения для локальных файлов» и обновить страницу.</p>
+    <h4>⚠️ Радиостанции не подключаются</h4>
+    <p>Не получилось подключиться сразу к нескольким станциям подряд. Обычно дело в интернет-соединении — проверьте его, а также отключите VPN или блокировщик рекламы, если он у вас включён (некоторые блокируют аудиопотоки).</p>
+    <p>Если соединение в порядке — возможно, эти конкретные станции временно недоступны. Закройте это окно и попробуйте нажать Play ещё раз чуть позже.</p>
   </div>
 
   <!-- ====== ЭЛЕМЕНТЫ "ЭМОЦИОНАЛЬНОГО ПЕРЕХОДА" (Да, хочу) ====== -->
@@ -885,29 +868,46 @@
   "use strict";
 
   /* ============================================================
-     1. ДАННЫЕ ПЛЕЙЛИСТА
+     1. ДАННЫЕ "ПЛЕЙЛИСТА"
      Настроение (mood) от 0 до 100:
        < 40   — грустный
        40-70  — нейтральный
        > 70   — бодрый
 
-     У всех треков ниже указан реальный src (mp3), поэтому getTrackUrl()
-     просто отдаёт его как есть — генератор тона (см. synthesizeTrack)
-     в дело не вступает. Поле duration не задаём: реальная длительность
-     подставится сама, как только браузер прочитает метаданные файла
-     (см. слушатель "loadedmetadata" в разделе 10). Если для какого-то
-     трека src оставить пустым (""), автоматически включится синтез —
-     это резервный вариант для тестов без интернета.
+     ВАЖНО: здесь больше нет закачанных mp3-файлов конкретных исполнителей —
+     вместо них подключены живые интернет-радиостанции (SomaFM,
+     https://somafm.com). Это некоммерческие интернет-радио с собственной
+     лицензией на вещание: мы не храним и не раздаём сами ничьи записи,
+     а просто проигрываем чужой публичный поток по прямой ссылке — так
+     авторские права артистов не нарушаются. Жанр каждой станции подобран
+     под нужную категорию настроения (16 станций всего):
+       грустные/спокойные (< 40)  — Drone Zone, Deep Space One, Doomed,
+                                     The Dark Zone, n5MD Radio
+       нейтральные (40-70)        — Groove Salad, Illinois Street Lounge,
+                                     Lush, Suburbs of Goa, Bossa Beyond
+       бодрые (> 70)              — PopTron, Boot Liquor, Seven Inch Soul,
+                                     Indie Pop Rocks!, Heavyweight Reggae, Tiki Time
+     Поле src — прямая ссылка на mp3-поток станции, duration не нужен:
+     радио вещает непрерывно, а не проигрывает файл фиксированной длины
+     (см. "живой" индикатор вместо прогресс-бара в разделе 10).
      ============================================================ */
   const TRACKS = [
-    { id: 1, title: "Nothing Else Matters", artist: "Metallica", mood: 15, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Metallica%20-%20Nothing%20Else%20Matters.mp3" },
-    { id: 2, title: "Hurt", artist: "Johnny Cash", mood: 10, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Johnny%20Cash%20-%20Hurt.mp3" },
-    { id: 3, title: "Fix You", artist: "Coldplay", mood: 25, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Coldplay%20-%20Fix%20You%23%23%23block_dwn.mp3" },
-    { id: 4, title: "Lose Yourself", artist: "Eminem", mood: 85, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Eminem%20-%20Lose%20Yourself.mp3" },
-    { id: 5, title: "Happy", artist: "Pharrell Williams", mood: 95, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Pharell%20Williams%20-%20Happy.mp3" },
-    { id: 6, title: "Someone Like You", artist: "Adele", mood: 20, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Adel%D0%B5%20-%20Someone%20Like%20You.mp3" },
-    { id: 7, title: "Shake It Off", artist: "Taylor Swift", mood: 90, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Taylor%20Swift%20-%20Shake%20It%20Off.mp3" },
-    { id: 8, title: "Mad World", artist: "Gary Jules", mood: 5, src: "%D0%9C%D1%83%D0%B7%D1%8B%D0%BA%D0%B0/Gary%20Jules%20-%20Mad%20World.mp3" },
+    { id: 1, title: "Drone Zone", artist: "SomaFM · тёмный эмбиент", mood: 15, src: "https://ice5.somafm.com/dronezone-128-mp3" },
+    { id: 2, title: "Deep Space One", artist: "SomaFM · космический эмбиент", mood: 10, src: "https://ice5.somafm.com/deepspaceone-128-mp3" },
+    { id: 3, title: "Doomed", artist: "SomaFM · тёмный индастриал-эмбиент", mood: 5, src: "https://ice5.somafm.com/doomed-128-mp3" },
+    { id: 4, title: "The Dark Zone", artist: "SomaFM · мрачный дип-эмбиент", mood: 20, src: "https://ice5.somafm.com/darkzone-128-mp3" },
+    { id: 5, title: "n5MD Radio", artist: "SomaFM · эмбиент и пост-рок", mood: 30, src: "https://ice5.somafm.com/n5md-128-mp3" },
+    { id: 6, title: "Groove Salad", artist: "SomaFM · чилл-электроника", mood: 50, src: "https://ice5.somafm.com/groovesalad-128-mp3" },
+    { id: 7, title: "Illinois Street Lounge", artist: "SomaFM · лаунж-джаз", mood: 55, src: "https://ice5.somafm.com/illstreet-128-mp3" },
+    { id: 8, title: "Lush", artist: "SomaFM · мягкий электро-вокал", mood: 45, src: "https://ice5.somafm.com/lush-128-mp3" },
+    { id: 9, title: "Suburbs of Goa", artist: "SomaFM · азиатский world-бит", mood: 60, src: "https://ice5.somafm.com/suburbsofgoa-128-mp3" },
+    { id: 10, title: "Bossa Beyond", artist: "SomaFM · босса-нова", mood: 65, src: "https://ice5.somafm.com/bossa-128-mp3" },
+    { id: 11, title: "PopTron", artist: "SomaFM · танцевальный инди-поп", mood: 85, src: "https://ice5.somafm.com/poptron-128-mp3" },
+    { id: 12, title: "Boot Liquor", artist: "SomaFM · задорный кантри-рок", mood: 80, src: "https://ice5.somafm.com/bootliquor-128-mp3" },
+    { id: 13, title: "Seven Inch Soul", artist: "SomaFM · винтажный соул", mood: 88, src: "https://ice5.somafm.com/7soul-128-mp3" },
+    { id: 14, title: "Indie Pop Rocks!", artist: "SomaFM · инди-поп", mood: 82, src: "https://ice5.somafm.com/indiepop-128-mp3" },
+    { id: 15, title: "Heavyweight Reggae", artist: "SomaFM · регги и ска", mood: 78, src: "https://ice5.somafm.com/reggae-128-mp3" },
+    { id: 16, title: "Tiki Time", artist: "SomaFM · тропический тики", mood: 92, src: "https://ice5.somafm.com/tikitime-128-mp3" },
   ];
 
   const SAD_THRESHOLD = 40;
@@ -943,11 +943,6 @@
     moodBadge: document.getElementById("moodBadge"),
     moodDot: document.getElementById("moodDot"),
     moodLabel: document.getElementById("moodLabel"),
-    timeCurrent: document.getElementById("timeCurrent"),
-    timeDuration: document.getElementById("timeDuration"),
-    progressTrack: document.getElementById("progressTrack"),
-    progressFill: document.getElementById("progressFill"),
-    progressHandle: document.getElementById("progressHandle"),
     prevBtn: document.getElementById("prevBtn"),
     playBtn: document.getElementById("playBtn"),
     playIcon: document.getElementById("playIcon"),
@@ -1256,7 +1251,6 @@
     el.moodBadge.style.borderColor = meta.color;
     el.coverIcon.textContent = meta.icon;
     el.cover.style.setProperty("--mood-glow", meta.color); // цвет свечения и кольца настроения
-    el.timeDuration.textContent = formatTime(track.duration);
 
     setMoodBackground(category); // плавная смена фона под mood трека
   }
@@ -1398,7 +1392,6 @@
       el.audio.src = url;
       el.audio.currentTime = 0;
       el.audio.volume = 0; // громкость с нуля — дальше плавно поднимем её вверх
-      updateProgressUI(0, track.duration);
 
       await playAudio({ resetGain: false }); // не даём playAudio сбросить громкость на 1 сразу
 
@@ -1434,7 +1427,6 @@
       if (myToken !== loadToken) return; // за время генерации трек уже сменился
       el.audio.src = url;
       el.audio.currentTime = 0;
-      updateProgressUI(0, track.duration);
       if (autoplay){
         await playAudio();
       } else {
@@ -1511,45 +1503,31 @@
   }
 
   /* ============================================================
-     10. ПРОГРЕСС-БАР
+     10. СОБЫТИЯ АУДИО-ПОТОКА
+     Радио вещает непрерывно, поэтому прогресс-бара/перемотки здесь нет —
+     только сброс счётчика ошибок при успешном подключении и обработка
+     обрывов потока (см. коммент к error ниже).
      ============================================================ */
-  function updateProgressUI(current, duration){
-    const pct = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
-    el.progressFill.style.width = pct + "%";
-    el.progressHandle.style.left = pct + "%";
-    el.timeCurrent.textContent = formatTime(current);
-    if (duration > 0) el.timeDuration.textContent = formatTime(duration);
-  }
-
-  el.audio.addEventListener("timeupdate", () => {
-    if (state.seeking) return;
-    updateProgressUI(el.audio.currentTime, el.audio.duration || TRACKS[state.currentIndex].duration);
-  });
-
-  // как только браузер прочитал метаданные реального файла — сразу
-  // показываем настоящую длительность, не дожидаясь первого timeupdate
+  // метаданные потока реально прочитались — значит соединение установлено,
+  // сбрасываем счётчик подряд идущих ошибок и прячем баннер, если он был показан
   el.audio.addEventListener("loadedmetadata", () => {
-    // метаданные реально прочитались — значит файл успешно загрузился,
-    // сбрасываем счётчик подряд идущих ошибок и прячем баннер, если он был показан
     state.loadFailStreak = 0;
     hideLoadErrorBanner();
-    if (isFinite(el.audio.duration)){
-      updateProgressUI(el.audio.currentTime, el.audio.duration);
-    }
   });
 
+  // для живого потока "ended" в норме не происходит (он не заканчивается),
+  // но на всякий случай (обрыв соединения сервером) ведём себя как обычно —
+  // переходим к следующей станции
   el.audio.addEventListener("ended", () => {
     nextTrack();
   });
 
-  // трек не смог загрузиться (мёртвая ссылка, нет сети, сервер не отдаёт
-  // сам файл, браузер блокирует локальный файл и т.п.) — сообщаем об этом
-  // явно, а не оставляем плеер молча "зависшим" на паузе, и пробуем сыграть
-  // следующий трек. НО: если ошибки идут подряд на нескольких треках
-  // (типичный признак того, что браузер в принципе не может прочитать
-  // локальные файлы — например, Safari по умолчанию блокирует HTML-файлу,
-  // открытому с диска, доступ к соседним файлам), автопереход по кругу
-  // ничего не даст и просто будет бесконечно листать плейлист. В этом
+  // поток не смог подключиться (нет сети, станция временно недоступна,
+  // блокировка файрволом/расширением и т.п.) — сообщаем об этом явно,
+  // а не оставляем плеер молча "зависшим" на паузе, и пробуем следующую
+  // станцию. НО: если ошибки идут подряд на нескольких станциях (типичный
+  // признак проблемы с самим интернет-соединением), автопереход по кругу
+  // ничего не даст и просто будет бесконечно листать список. В этом
   // случае останавливаемся и показываем понятное объяснение вместо тихого
   // зацикливания.
   const LOAD_FAIL_STREAK_LIMIT = 3;
@@ -1565,7 +1543,7 @@
     }
 
     const track = TRACKS[state.currentIndex];
-    showToast("Не удалось загрузить трек «" + track.title + "» — пробуем следующий");
+    showToast("Не удалось подключиться к «" + track.title + "» — пробуем следующую станцию");
     setTimeout(() => { if (!state.transitioning) nextTrack(); }, 1200);
   });
 
@@ -1580,27 +1558,6 @@
     state.loadFailStreak = 0; // даём шанс попробовать снова вручную
   });
 
-  function seekFromEvent(evt){
-    const rect = el.progressTrack.getBoundingClientRect();
-    const x = (evt.touches ? evt.touches[0].clientX : evt.clientX) - rect.left;
-    const ratio = Math.max(0, Math.min(1, x / rect.width));
-    const duration = el.audio.duration || TRACKS[state.currentIndex].duration;
-    updateProgressUI(ratio * duration, duration);
-    if (el.audio.src && isFinite(el.audio.duration)){
-      el.audio.currentTime = ratio * el.audio.duration;
-    }
-  }
-
-  el.progressTrack.addEventListener("mousedown", (e) => {
-    state.seeking = true;
-    seekFromEvent(e);
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (state.seeking) seekFromEvent(e);
-  });
-  window.addEventListener("mouseup", () => { state.seeking = false; });
-  el.progressTrack.addEventListener("click", seekFromEvent);
-
   /* ============================================================
      11. ПРИВЯЗКА КНОПОК
      ============================================================ */
@@ -1611,17 +1568,17 @@
   /* ============================================================
      12. ИНИЦИАЛИЗАЦИЯ
      ============================================================ */
-  // склонение "N треков/трек/трека" для заголовка плейлиста
-  function pluralizeTracks(n){
+  // склонение "N станций/станция/станции" для заголовка списка
+  function pluralizeStations(n){
     const mod10 = n % 10;
     const mod100 = n % 100;
-    if (mod10 === 1 && mod100 !== 11) return n + " трек";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return n + " трека";
-    return n + " треков";
+    if (mod10 === 1 && mod100 !== 11) return n + " станция";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return n + " станции";
+    return n + " станций";
   }
 
   function init(){
-    el.playlistCount.textContent = pluralizeTracks(TRACKS.length);
+    el.playlistCount.textContent = pluralizeStations(TRACKS.length);
 
     // грузим первый трек через loadTrack (а не рендерим руками!), чтобы
     // настроение первого трека учлось в счётчике sadStreak ровно один раз
