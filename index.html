@@ -1,1513 +1,235 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vibe Player — эмоциональный аудиоплеер</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOOD — музыка в твоём ритме</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23121827'/%3E%3Cpath d='M9 20V12m7 12V8m7 12V12' stroke='%2395b6ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
-  /* ==========================================================
-     БАЗА / СБРОС
-     ========================================================== */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root{
-    --sad:    #6ea8ff;   /* грустный — холодный синий  */
-    --neutral:#c9c9d6;   /* нейтральный — серый          */
-    --happy:  #ffb454;   /* бодрый — тёплый оранжевый    */
-    --glass-bg: rgba(255,255,255,0.06);
-    --glass-border: rgba(255,255,255,0.14);
-    --text-main: #f2f2f7;
-    --text-dim: rgba(242,242,247,0.55);
-  }
-
-  html, body{
-    height: 100%;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-    color: var(--text-main);
-    background: #0b0c14;
-    overflow-x: hidden;
-  }
-
-  /* ==========================================================
-     ДИНАМИЧЕСКИЙ ФОН, ЗАВИСЯЩИЙ ОТ MOOD ТЕКУЩЕГО ТРЕКА
-     Градиенты CSS не умеют плавно переходить друг в друга через
-     transition, поэтому используем приём с двумя наложенными
-     слоями: у неактивного слоя меняем background, затем
-     кросс-фейдим через opacity — снаружи это выглядит как
-     плавная смена градиента.
-     ========================================================== */
-  .bg{
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    overflow: hidden;
-    background: #0b0c14; /* базовый фон, виден до первого рендера */
-  }
-  .mood-layer{
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    transition: opacity 1.6s ease;
-  }
-  .mood-layer.active{ opacity: 1; }
-
-  .blob{
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(70px);
-    opacity: 0.55;
-    will-change: transform;
-    /* блобы идут в разметке после mood-layer, поэтому естественным
-       порядком отрисовки они лежат поверх градиента настроения */
-  }
-  .blob--1{
-    width: 420px; height: 420px;
-    top: -120px; left: -100px;
-    background: radial-gradient(circle, #4c6bff, transparent 70%);
-    animation: float1 18s ease-in-out infinite;
-  }
-  .blob--2{
-    width: 380px; height: 380px;
-    bottom: -140px; right: -80px;
-    background: radial-gradient(circle, #ff7a6e, transparent 70%);
-    animation: float2 22s ease-in-out infinite;
-  }
-  .blob--3{
-    width: 300px; height: 300px;
-    top: 40%; left: 60%;
-    background: radial-gradient(circle, #ffb454, transparent 70%);
-    animation: float3 26s ease-in-out infinite;
-  }
-  @keyframes float1{
-    0%,100%{ transform: translate(0,0) scale(1); }
-    50%{ transform: translate(60px, 80px) scale(1.15); }
-  }
-  @keyframes float2{
-    0%,100%{ transform: translate(0,0) scale(1); }
-    50%{ transform: translate(-50px,-60px) scale(1.1); }
-  }
-  @keyframes float3{
-    0%,100%{ transform: translate(0,0) scale(1); }
-    50%{ transform: translate(-70px, 40px) scale(0.9); }
-  }
-
-  /* ==========================================================
-     ОБЩИЙ КОНТЕЙНЕР ПРИЛОЖЕНИЯ
-     ========================================================== */
-  .app-wrap{
-    position: relative;  /* + z-index ниже гарантируют, что контент лежит НАД .bg */
-    z-index: 1;
-    min-height: 100vh;
-    display: flex;
-    align-items: stretch;   /* карта плеера растягивается на всю высоту экрана */
-    justify-content: center;
-    padding: 28px clamp(16px, 3vw, 48px);
-  }
-
-  /* базовый класс "стекла" — используется и для плеера, и для модалки */
-  .glass{
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: 24px;
-    backdrop-filter: blur(20px) saturate(160%);
-    -webkit-backdrop-filter: blur(20px) saturate(160%);
-    box-shadow:
-      0 8px 32px rgba(0,0,0,0.45),
-      inset 0 1px 0 rgba(255,255,255,0.08);
-  }
-
-  .player{
-    width: 100%;
-    max-width: 1400px;      /* используем всю ширину экрана, но не растягиваемся до бесконечности на сверхширoких мониторах */
-    padding: 26px 30px 26px;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    animation: appear .6s ease both;
-  }
-  @keyframes appear{
-    from{ opacity: 0; transform: translateY(16px) scale(.98); }
-    to{ opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  /* двухколоночное тело: слева — сам плеер, справа — плейлист на всю высоту */
-  .player-body{
-    flex: 1;
-    display: flex;
-    align-items: stretch;
-    gap: 34px;
-    min-height: 0; /* чтобы дочерний скролл плейлиста работал внутри flex-контейнера */
-  }
-
-  .now-playing-panel{
-    flex: 0 0 380px;
-    max-width: 380px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;  /* содержимое центрируется по высоте всей левой колонки */
-    padding-right: 34px;
-    border-right: 1px solid rgba(255,255,255,0.1);
-  }
-
-  .playlist-panel{
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .app-title{
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-    margin-bottom: 22px;
-  }
-  .app-title .dot{
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--happy);
-    box-shadow: 0 0 10px var(--happy);
-    animation: pulseDot 2.4s ease-in-out infinite;
-  }
-  @keyframes pulseDot{
-    0%,100%{ opacity: .5; transform: scale(1); }
-    50%{ opacity: 1; transform: scale(1.3); }
-  }
-
-  /* ---------- блок "сейчас играет" ---------- */
-  .now-playing{
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    margin-bottom: 20px;
-  }
-
-  .cover{
-    width: 150px; height: 150px;
-    border-radius: 50%;
-    margin-bottom: 18px;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.18), rgba(255,255,255,0.02) 60%);
-    border: 1px solid var(--glass-border);
-    box-shadow: 0 0 40px 4px var(--mood-glow, rgba(255,255,255,0.08));
-    transition: box-shadow .6s ease;
-  }
-  .cover::before{
-    /* вращающееся "кольцо" — крутится только когда играет */
-    content: "";
-    position: absolute;
-    inset: -6px;
-    border-radius: 50%;
-    border: 2px dashed rgba(255,255,255,0.18);
-  }
-  .cover.spinning::before{
-    animation: spin 6s linear infinite;
-  }
-  @keyframes spin{ to{ transform: rotate(360deg); } }
-
-  /* пульсирующий круг настроения вокруг обложки: сплошное кольцо,
-     которое непрерывно "дышит" и плавно меняет цвет вместе с mood
-     (синий → серый → оранжевый), независимо от того, играет трек или нет */
-  .mood-ring{
-    position: absolute;
-    inset: -11px;
-    border-radius: 50%;
-    border: 2px solid var(--mood-glow, var(--neutral));
-    opacity: .6;
-    transition: border-color .6s ease;
-    animation: moodRingPulse 2.2s ease-in-out infinite;
-    pointer-events: none;
-  }
-  @keyframes moodRingPulse{
-    0%, 100%{ transform: scale(1);    opacity: .6; }
-    50%{      transform: scale(1.14); opacity: .15; }
-  }
-
-  .cover-icon{ font-size: 46px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.4)); }
-
-  .track-title-row{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    margin-bottom: 4px;
-  }
-  .track-title{
-    font-size: 19px;
-    font-weight: 600;
-    max-width: 300px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .track-artist{
-    font-size: 14px;
-    color: var(--text-dim);
-    margin-bottom: 12px;
-  }
-
-  .mood-badge{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 5px 12px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.07);
-    border: 1px solid rgba(255,255,255,0.12);
-    transition: color .3s ease, border-color .3s ease;
-  }
-  .mood-badge .mood-dot{
-    width: 7px; height: 7px; border-radius: 50%;
-    box-shadow: 0 0 8px currentColor;
-    animation: moodPulse 1.8s ease-in-out infinite;
-  }
-  @keyframes moodPulse{
-    0%,100%{ transform: scale(1); opacity: .8; }
-    50%{ transform: scale(1.35); opacity: 1; }
-  }
-
-  .time{
-    font-size: 11px;
-    color: var(--text-dim);
-    min-width: 34px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-  }
-  .progress-track{
-    flex: 1;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.08);
-    position: relative;
-    cursor: pointer;
-    overflow: hidden;
-  }
-  .progress-fill{
-    position: absolute;
-    top: 0; left: 0; bottom: 0;
-    width: 0%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #6ea8ff, #ffb454);
-    transition: width .12s linear;
-  }
-  .progress-track:hover .progress-fill{ filter: brightness(1.15); }
-  .progress-handle{
-    position: absolute;
-    top: 50%; left: 0%;
-    width: 12px; height: 12px;
-    border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 0 6px rgba(0,0,0,.5);
-    transform: translate(-50%,-50%);
-    transition: left .12s linear;
-    opacity: 0;
-  }
-  .progress-track:hover .progress-handle{ opacity: 1; }
-
-  /* ---------- кнопки управления ---------- */
-  .controls{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 22px;
-    margin-bottom: 24px;
-  }
-  .ctrl-btn{
-    background: none;
-    border: none;
-    color: var(--text-main);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform .15s ease, opacity .15s ease;
-    opacity: .85;
-  }
-  .ctrl-btn:hover{ opacity: 1; transform: scale(1.12); }
-  .ctrl-btn:active{ transform: scale(0.94); }
-  .ctrl-btn svg{ width: 22px; height: 22px; }
-  .ctrl-btn:disabled{ opacity: .35; cursor: default; transform: none; }
-
-  .play-btn{
-    width: 62px; height: 62px;
-    border-radius: 50%;
-    background: linear-gradient(145deg, #6ea8ff, #ffb454);
-    color: #14141c;
-    box-shadow: 0 6px 24px rgba(255,180,84,0.35);
-    position: relative;
-  }
-  .play-btn svg{ width: 24px; height: 24px; }
-  .play-btn::after{
-    /* пульсирующее кольцо, когда трек играет */
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 2px solid rgba(255,180,84,0.6);
-    opacity: 0;
-  }
-  .play-btn.is-playing::after{
-    animation: ring 1.6s ease-out infinite;
-  }
-  @keyframes ring{
-    0%{ opacity: .7; transform: scale(1); }
-    100%{ opacity: 0; transform: scale(1.55); }
-  }
-
-  /* ---------- маленький ненавязчивый счётчик в углу экрана ---------- */
-  .corner-streak{
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    font-size: 11px;
-    padding: 6px 11px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    color: var(--text-dim);
-    z-index: 5;
-    user-select: none;
-    transition: color .3s ease, border-color .3s ease, background .3s ease;
-  }
-  .corner-streak b{ color: var(--text-main); font-weight: 700; }
-  .corner-streak.warn{
-    border-color: rgba(110,168,255,0.45);
-    color: var(--sad);
-    background: rgba(110,168,255,0.08);
-  }
-  .corner-streak.warn b{ color: var(--sad); }
-
-  /* ---------- плейлист ---------- */
-  /* заголовок правой колонки со списком треков */
-  .playlist-header{
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 14px;
-    flex-shrink: 0;
-  }
-  .playlist-header h2{
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: .02em;
-  }
-  .playlist-header .count{
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-
-  .playlist{
-    list-style: none;
-    flex: 1;              /* занимает всю оставшуюся высоту правой колонки */
-    min-height: 0;         /* обязательно для корректного overflow внутри flex */
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding-right: 6px;
-  }
-  .playlist::-webkit-scrollbar{ width: 5px; }
-  .playlist::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.15); border-radius: 4px; }
-
-  .track-item{
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 10px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: background .18s ease, transform .18s ease;
-    border: 1px solid transparent;
-  }
-  .track-item:hover{
-    background: rgba(255,255,255,0.06);
-    transform: translateX(2px);
-  }
-  .track-item.active{
-    background: rgba(255,255,255,0.1);
-    border-color: rgba(255,255,255,0.16);
-  }
-  .track-item .num{
-    width: 18px;
-    font-size: 11px;
-    color: var(--text-dim);
-    text-align: center;
-    flex-shrink: 0;
-  }
-  .track-item.active .num{ color: var(--happy); }
-  .track-item .meta{ flex: 1; min-width: 0; }
-  .track-item .t-title{
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .track-item .t-artist{
-    font-size: 11px;
-    color: var(--text-dim);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .mood-chip{
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    box-shadow: 0 0 6px currentColor;
-  }
-  .now-eq{
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 12px;
-    flex-shrink: 0;
-  }
-  .now-eq span{
-    width: 3px;
-    background: var(--happy);
-    border-radius: 2px;
-    animation: eq 1s ease-in-out infinite;
-  }
-  .now-eq span:nth-child(1){ animation-delay: 0s; }
-  .now-eq span:nth-child(2){ animation-delay: .2s; }
-  .now-eq span:nth-child(3){ animation-delay: .4s; }
-  @keyframes eq{
-    0%,100%{ height: 3px; }
-    50%{ height: 12px; }
-  }
-
-  /* ==========================================================
-     МОДАЛЬНОЕ ОКНО "СМЕНИТЬ ВАЙБ?" — всплывает снизу (bottom sheet)
-     ========================================================== */
-  .modal-overlay{
-    position: fixed;
-    inset: 0;
-    background: rgba(5,5,10,0.5);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    display: flex;
-    align-items: flex-end;           /* модалка прижата к низу экрана */
-    justify-content: center;
-    padding-bottom: 26px;
-    z-index: 50;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .3s ease;
-  }
-  .modal-overlay.open{
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .modal{
-    width: 92%;
-    max-width: 360px;
-    padding: 30px 26px 26px;
-    text-align: center;
-    /* стеклянный фон + сильное размытие, отдельное от .glass,
-       чтобы модалка визуально "плавала" над плеером */
-    background: rgba(30,30,45,0.55);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid rgba(255,255,255,0.16);
-    box-shadow: 0 -8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
-    /* анимация slide-up: стартуем далеко под экраном */
-    transform: translateY(140%);
-    transition: transform .45s cubic-bezier(.22,1.1,.36,1);
-  }
-  .modal-overlay.open .modal{
-    transform: translateY(0);
-  }
-  .modal-icon{
-    font-size: 34px;
-    margin-bottom: 10px;
-    display: inline-block;
-    animation: bounce 1.4s ease-in-out infinite;
-  }
-  @keyframes bounce{
-    0%,100%{ transform: translateY(0); }
-    50%{ transform: translateY(-6px); }
-  }
-  .modal h3{
-    font-size: 17px;
-    margin-bottom: 8px;
-  }
-  .modal p{
-    font-size: 13px;
-    color: var(--text-dim);
-    line-height: 1.5;
-    margin-bottom: 22px;
-  }
-  .modal-buttons{
-    display: flex;
-    gap: 10px;
-  }
-  .modal-buttons button{
-    flex: 1;
-    padding: 12px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--glass-border);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform .18s ease, filter .18s ease, box-shadow .18s ease, background .18s ease;
-  }
-  .modal-buttons button:active{ transform: translateY(0) scale(.97); }
-  .btn-yes{
-    background: linear-gradient(135deg, #6ea8ff, #ffb454);
-    color: #14141c;
-    border: none;
-    box-shadow: 0 4px 16px rgba(255,180,84,0.25);
-  }
-  .btn-yes:hover{
-    transform: translateY(-2px);
-    filter: brightness(1.1);
-    box-shadow: 0 8px 22px rgba(255,180,84,0.45);
-  }
-  .btn-no{
-    background: rgba(255,255,255,0.06);
-    color: var(--text-main);
-  }
-  .btn-no:hover{
-    transform: translateY(-2px);
-    background: rgba(255,255,255,0.14);
-    border-color: rgba(255,255,255,0.3);
-  }
-
-  /* маленькая тост-подсказка о том, что уведомления выключены (для наглядности) */
-  .toast{
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%) translateY(20px);
-    background: rgba(20,20,30,0.9);
-    border: 1px solid var(--glass-border);
-    padding: 10px 16px;
-    border-radius: 12px;
-    font-size: 12px;
-    color: var(--text-dim);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .3s ease, transform .3s ease;
-    z-index: 60;
-  }
-  .toast.show{
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
-
-  /* на планшетах/узких окнах колонки складываются друг под друга */
-  @media (max-width: 860px){
-    .app-wrap{ align-items: flex-start; padding: 20px 16px; }
-    .player{ max-width: 560px; margin: 0 auto; }
-    .player-body{ flex-direction: column; }
-    .now-playing-panel{
-      flex: 0 0 auto;
-      max-width: none;
-      width: 100%;
-      padding-right: 0;
-      padding-bottom: 22px;
-      border-right: none;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-      margin-bottom: 18px;
-    }
-    .playlist{ flex: none; max-height: 320px; }
-  }
-
-  @media (max-width: 420px){
-    .player{ padding: 22px 16px; }
-    .cover{ width: 120px; height: 120px; }
-  }
-
-  /* ==========================================================
-     "ЭМОЦИОНАЛЬНЫЙ ПЕРЕХОД" — вспышка + баннер при смене вайба
-     ========================================================== */
-
-  /* белая вспышка на весь экран */
-  .flash-overlay{
-    position: fixed;
-    inset: 0;
-    background: #ffffff;
-    opacity: 0;
-    z-index: 80;
-    pointer-events: none;
-  }
-  .flash-overlay.flash-in{
-    opacity: 1;
-    transition: opacity .15s ease;
-  }
-  .flash-overlay.flash-out{
-    opacity: 0;
-    transition: opacity .7s ease;
-  }
-
-  /* всплывающая надпись "Настроение обновлено ✨" */
-  .mood-update-banner{
-    position: fixed;
-    top: 42%;
-    left: 50%;
-    transform: translate(-50%, -50%) scale(.75);
-    padding: 15px 28px;
-    border-radius: 999px;
-    background: rgba(18,18,28,0.55);
-    border: 1px solid rgba(255,255,255,0.25);
-    backdrop-filter: blur(18px) saturate(180%);
-    -webkit-backdrop-filter: blur(18px) saturate(180%);
-    color: #fff;
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: .01em;
-    white-space: nowrap;
-    text-shadow: 0 2px 12px rgba(0,0,0,.4);
-    box-shadow: 0 12px 40px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,0.12);
-    opacity: 0;
-    z-index: 90;
-    pointer-events: none;
-    transition: opacity .35s ease, transform .4s cubic-bezier(.34,1.56,.64,1);
-  }
-  .mood-update-banner.show{
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-  .mood-update-banner .sparkle{
-    display: inline-block;
-    animation: sparkleSpin 1.4s ease-in-out infinite;
-  }
-  @keyframes sparkleSpin{
-    0%, 100%{ transform: rotate(0deg) scale(1); }
-    50%{ transform: rotate(18deg) scale(1.3); }
-  }
+/* Полупрозрачные поверхности и световые пятна не требуют внешних ресурсов. */
+:root{color-scheme:dark;--accent:#9cbaff;--muted:#a6afc4;--line:#ffffff16}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#080d19;color:#f1f4ff;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body:before{content:"";position:fixed;inset:0;z-index:-1;background:radial-gradient(ellipse at 18% 32%,#243c7260,transparent 52%),radial-gradient(ellipse at 92% 78%,#4b286747,transparent 50%);animation:ambient 16s ease-in-out infinite alternate}button,input{font:inherit}button{cursor:pointer;color:inherit}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:5px}button{transition:background .2s,transform .2s}button:hover{background:#ffffff13}button:active{transform:scale(.96)}.shell{max-width:1140px;margin:auto;padding:42px 30px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:36px}.brand{font-size:23px;letter-spacing:5px;font-weight:750}.brand span{color:var(--accent)}.eyebrow{font-size:12px;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted)}.session{font-size:13px;color:var(--muted)}main{display:grid;grid-template-columns:1fr 1fr;gap:24px}.glass{background:linear-gradient(140deg,#ffffff0c,#ffffff04);border:1px solid var(--line);border-radius:26px;backdrop-filter:blur(28px);box-shadow:0 24px 80px #0003}.player{padding:30px 38px;text-align:center;overflow:hidden}.topline{display:flex;justify-content:space-between;align-items:center}.tag{border:1px solid #9cbaff30;background:#9cbaff0b;padding:5px 12px;border-radius:20px;font-size:13px;color:var(--accent)}.visual{height:270px;display:grid;place-items:center;position:relative}.orb{width:196px;height:196px;border-radius:50%;background:radial-gradient(circle at 30% 26%,#d4e2ff66,transparent 40%),radial-gradient(circle at 65% 75%,#6571e566,transparent 60%),#789cda17;border:1px solid #b4caff45;box-shadow:inset -15px -15px 45px #070e3466,inset 4px 4px 20px #e1ecff22,0 0 70px #6385e524;display:grid;place-items:center;animation:float 6s ease-in-out infinite}.wave{display:flex;gap:7px;align-items:center;height:60px}.wave i{width:4px;border-radius:5px;background:#d2dfff;height:20px;animation:wave 1.2s ease-in-out infinite alternate;animation-play-state:paused}.playing .wave i{animation-play-state:running}.wave i:nth-child(2n){height:47px;animation-delay:-.4s}.wave i:nth-child(3n){height:34px;animation-delay:-.8s}h1{font-size:32px;line-height:1.2;margin:5px 0 8px;letter-spacing:-1px}.artist{color:var(--muted);margin:0 0 25px}.seek{width:100%;accent-color:var(--accent);cursor:pointer;height:18px}.times{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}.controls{display:flex;align-items:center;justify-content:center;gap:26px;margin:25px 0}.icon{border:0;background:transparent;width:46px;height:46px;display:grid;place-items:center}.icon svg{width:23px;height:23px;fill:currentColor}.play{width:66px;height:66px;border-radius:50%;background:#dbe5ff;color:#15223f;box-shadow:0 0 30px #9cbaff22}.play:hover{background:white}.tracking{border-top:1px solid var(--line);padding-top:20px;display:flex;align-items:center;justify-content:space-between;text-align:left;font-size:14px}.tracking small{display:block;color:var(--muted);font-size:12px}.dots{display:flex;gap:6px}.dots i{width:9px;height:9px;border-radius:50%;background:#ffffff15;transition:background .4s}.dots i.on{background:var(--accent);box-shadow:0 0 10px #9cbaff55}.playlist{padding:27px 20px}.listhead{padding:0 12px 22px;display:flex;justify-content:space-between;align-items:center}h2{font-size:21px;margin:0;font-weight:600;letter-spacing:-.5px}.count{font-size:13px;color:var(--muted)}ol{margin:0;padding:0;list-style:none}.track{display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:center;width:100%;text-align:left;border:1px solid transparent;border-radius:13px;background:transparent;padding:14px 12px}.track.active{background:#9cbaff10;border-color:#9cbaff25}.number{font-size:12px;color:#8e9dbb;font-variant-numeric:tabular-nums}.track.active .number{color:var(--accent)}.title{display:block;font-size:15px;font-weight:550}.by{display:block;color:var(--muted);font-size:12px;margin-top:2px}.mood{font-size:12px;color:#acc2f4;white-space:nowrap}.mood.neutral{color:#c5c6d1}.mood.happy{color:#bde6b8}.legend{border-top:1px solid var(--line);margin:18px 12px 0;padding-top:18px;display:flex;gap:17px;color:var(--muted);font-size:12px}footer{margin-top:24px;display:flex;justify-content:space-between;gap:20px;color:#8d98b0;font-size:12px}#status{min-height:18px}.notice{max-width:420px;width:calc(100% - 32px);padding:32px;color:#f1f4ff;background:#172136ed;border:1px solid #ffffff30;border-radius:24px;box-shadow:0 30px 120px #0009;backdrop-filter:blur(30px)}.notice::backdrop{background:#03071399;backdrop-filter:blur(8px)}.notice[open]{animation:appear .3s ease-out}.notice h2{font-size:26px;margin:14px 0}.notice p{color:#bbc5d9}.actions{display:flex;gap:10px;margin-top:26px}.actions button{flex:1;border:1px solid #ffffff22;border-radius:12px;padding:12px;background:transparent}.actions .yes{background:#dbe5ff;color:#15223f}.note{font-size:12px}.notice .symbol{font-size:28px;color:#bed1ff}@keyframes float{50%{transform:translateY(-9px)}}@keyframes ambient{to{opacity:.6;transform:scale(1.06)}}@keyframes wave{to{transform:scaleY(.4)}}@keyframes appear{from{opacity:0;transform:translateY(15px)}}@media(max-width:760px){.shell{padding:25px 16px}header{margin-bottom:24px}.session{font-size:12px}main{grid-template-columns:1fr}.player{padding:25px}.visual{height:235px}footer{flex-direction:column;gap:4px}.legend{flex-wrap:wrap}}@media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
+/* Палитры настроения. Синий вариант сохраняет исходный вид. */
+body{--accent:#9cbaff;--track-color:#293b60;--theme-rgb:156,186,255;--surface:#080d19;--glow-a:#243c7260;--glow-b:#4b286747;--orb-top:#d4e2ff66;--orb-bottom:#6571e566;--button:#dbe5ff;--ink:#15223f;background:var(--surface);transition:background 1s ease,color .6s ease}
+body[data-mood="neutral"]{--accent:#8bd9cd;--track-color:#244c4c;--theme-rgb:139,217,205;--surface:#091716;--glow-a:#205f5960;--glow-b:#24455247;--orb-top:#c7fff166;--orb-bottom:#42a59b66;--button:#c7eee6;--ink:#173b35;--muted:#a2bdb8}
+body[data-mood="happy"]{--accent:#ffc582;--track-color:#60442d;--theme-rgb:255,197,130;--surface:#1a100e;--glow-a:#92502560;--glow-b:#71324d47;--orb-top:#fff0c866;--orb-bottom:#e77c5266;--button:#ffe0b5;--ink:#4a2b19;--muted:#c8afa0}
+body:before{background:none}
+/* Два дополнительных световых слоя обеспечивают плавную смену фона. */
+.shell:before,.shell:after{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;transition:opacity 1s ease}
+.shell:before{background:radial-gradient(ellipse at 18% 32%,#205f5960,transparent 52%),radial-gradient(ellipse at 92% 78%,#24455247,transparent 50%);opacity:0}
+.shell:after{background:radial-gradient(ellipse at 18% 32%,#92502560,transparent 52%),radial-gradient(ellipse at 92% 78%,#71324d47,transparent 50%);opacity:0}
+body:before{background:radial-gradient(ellipse at 18% 32%,#243c7260,transparent 52%),radial-gradient(ellipse at 92% 78%,#4b286747,transparent 50%);transition:opacity 1s ease;animation:none}
+body[data-mood="neutral"]:before,body[data-mood="happy"]:before{opacity:0}
+body[data-mood="neutral"] .shell:before,body[data-mood="happy"] .shell:after{opacity:1}
+.orb{background:radial-gradient(circle at 30% 26%,var(--orb-top),transparent 40%),radial-gradient(circle at 65% 75%,var(--orb-bottom),transparent 60%),rgba(var(--theme-rgb),.09);border-color:rgba(var(--theme-rgb),.27);box-shadow:inset -15px -15px 45px #0003,inset 4px 4px 20px #ffffff22,0 0 70px rgba(var(--theme-rgb),.14);transition:background .8s,border-color .8s,box-shadow .8s}
+.wave i{background:var(--button);transition:background .8s}
+.tag{color:var(--accent);border:0;background:transparent;padding-right:0}
+.play,.actions .yes{background:var(--button);color:var(--ink);box-shadow:0 0 30px rgba(var(--theme-rgb),.13)}
+.play:hover{background:var(--accent)}
+.track.active{background:rgba(var(--theme-rgb),.06);border-color:rgba(var(--theme-rgb),.15)}
+/* Номера следуют палитре плеера; mood каждого трека — его собственной категории. */
+.number{color:rgba(var(--theme-rgb),.7);transition:color .6s ease}
+.track.active .number{color:var(--accent)}
+.mood{color:#9cbaff}.mood.neutral{color:#8bd9cd}.mood.happy{color:#ffc582}
+#previous,#next{color:#fff}
+.dots i.on{box-shadow:0 0 10px rgba(var(--theme-rgb),.33)}
+.notice{background:var(--surface)}.notice p{color:var(--muted)}.notice .symbol{color:var(--accent)}
+.seek::-webkit-slider-runnable-track{transition:background .8s}
+/* Холодный синий трек вместо стандартной серой полосы браузера. */
+.seek{appearance:none;-webkit-appearance:none;background:transparent;--progress:0%}
+.seek::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:linear-gradient(to right,var(--accent) 0%,var(--accent) var(--progress),var(--track-color) var(--progress),var(--track-color) 100%)}
+.seek::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;border:0;border-radius:50%;background:var(--accent)}
+.seek::-moz-range-track{height:4px;border-radius:999px;background:var(--track-color)}
+.seek::-moz-range-progress{height:4px;border-radius:999px;background:var(--accent)}
+.seek::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+/* Высота карточек ограничена окном; прокручивается только список треков.
+   На низких экранах сначала уменьшаются декор и свободные отступы. */
+html,body{height:100%;overflow:hidden}
+.shell{height:100vh;height:100dvh;display:flex;flex-direction:column;padding:clamp(12px,3vh,32px) 30px;gap:clamp(10px,2vh,22px)}
+header{flex:none;margin:0}
+main{flex:1;min-height:0;min-width:0;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:minmax(0,1fr)}
+.player{min-height:0;min-width:0;display:flex;flex-direction:column;padding:clamp(16px,3vh,30px) clamp(12px,3vw,32px)}
+.topline,h1,.artist,.seek,.times,.controls,.tracking{flex-shrink:0}
+/* Свечение выходит за область круга без прямоугольной обрезки. */
+.visual{flex:1;min-height:0;min-width:0;width:100%;height:auto;padding:0;container-type:size;overflow:visible;pointer-events:none}
+/* Размер круга зависит от свободной области, а не от высоты карточки.
+   Запас 24px сохраняет расстояние до текста даже во время анимации. */
+.orb{position:absolute;width:max(0px,min(196px,calc(100cqh - 24px),calc(100cqw - 24px)));height:auto;min-height:0;max-width:196px;aspect-ratio:1}
+@container(max-height:48px){.orb{display:none}}
+@container(max-width:48px){.orb{display:none}}
+h1,.artist{max-width:100%;overflow-wrap:anywhere}
+.topline{gap:8px;flex-wrap:wrap}
+/* Все размеры волн заданы относительно круга: рисунок масштабируется целиком. */
+.wave{width:36%;height:31%;max-height:100%;gap:0;justify-content:space-between;overflow:hidden}
+.wave i{width:5.7%;height:33.33%;flex-shrink:0;border-radius:999px}
+.wave i:nth-child(2n){height:78.33%}
+.wave i:nth-child(3n){height:56.67%}
+.artist{margin-bottom:clamp(8px,2vh,25px)}
+.controls{margin:clamp(10px,2.5vh,25px) 0}
+.tracking{border-top:0;padding-top:clamp(10px,2vh,20px)}
+.playlist{min-height:0;min-width:0;display:flex;flex-direction:column;padding:22px 16px}
+.listhead,.legend{flex-shrink:0}
+/* Номер и mood выравниваются по базовой линии названия, а не двух строк. */
+.track{align-items:baseline}
+.legend{border-top:0}
+#tracks{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(var(--theme-rgb),.33) transparent;scrollbar-gutter:stable;padding:5px}
+#tracks::-webkit-scrollbar{width:6px}
+#tracks::-webkit-scrollbar-thumb{background:rgba(var(--theme-rgb),.33);border-radius:6px}
+/* Статус доступен скринридерам, но больше не занимает место под карточками. */
+footer{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.notice{max-height:calc(100dvh - 32px);overflow-y:auto}
+.notice h2{margin:4px 44px 14px 0}
+.notice p{margin:0;line-height:1.65}
+.notice .actions{margin-top:36px}
+.notice-close{position:absolute;top:37px;right:32px;width:36px;height:36px;display:grid;place-items:center;border:0;border-radius:8px;background:#ffffff08;color:var(--muted)}
+.notice-close:focus,.notice-close:focus-visible{outline:none}
+.notice-close:focus-visible{background:#ffffff13;color:#fff}
+.notice-close:hover{color:#fff;background:#ffffff13}
+.notice-close svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linecap:round}
+/* Состояния попапа используют акцент текущей палитры. */
+.notice-close,.notice .actions button{transition:background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .12s ease}
+.notice-close:hover{background:rgba(var(--theme-rgb),.18);color:#fff}
+.notice-close:active{background:rgba(var(--theme-rgb),.3);transform:scale(.9);box-shadow:inset 0 2px 5px #0003}
+.notice .actions button:hover{background:rgba(var(--theme-rgb),.12);border-color:rgba(var(--theme-rgb),.5);transform:translateY(-1px)}
+.notice .actions button:active{background:rgba(var(--theme-rgb),.22);transform:translateY(1px) scale(.98);box-shadow:inset 0 2px 6px #0003}
+.notice .actions .yes:hover{background:var(--accent);border-color:var(--accent);box-shadow:0 4px 20px rgba(var(--theme-rgb),.25)}
+.notice .actions .yes:active{background:var(--accent);box-shadow:inset 0 3px 8px #0003}
+@media(max-width:760px){
+ .shell{padding:12px 16px;gap:10px}
+ header{margin:0}.session{font-size:12px}
+ main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(280px,1.2fr) minmax(120px,1fr);gap:12px}
+ .player{padding:14px 20px}.visual{padding:0}
+ h1{font-size:26px}.artist{margin-bottom:8px;font-size:14px}
+ .controls{margin:8px 0}.play{width:50px;height:50px}
+ .tracking{padding-top:8px}.playlist{padding:12px}
+ .listhead{padding-bottom:8px}.legend{margin-top:8px;padding-top:8px;gap:8px}
+ footer{font-size:12px}
+}
+/* При экстремально малой высоте оставляем доступ к управлению через скролл. */
+@media(max-height:480px){
+ html,body{height:auto;overflow:auto}
+ .shell{height:auto;min-height:100dvh}
+ main{flex:none;min-height:380px}
+ .playlist{max-height:380px}
+ .visual{display:none}
+}
 </style>
 </head>
 <body>
-
-  <!-- анимированный фон: два слоя градиента настроения (для кросс-фейда) + блобы поверх -->
-  <div class="bg">
-    <div class="mood-layer" id="moodLayerA"></div>
-    <div class="mood-layer" id="moodLayerB"></div>
-    <div class="blob blob--1"></div>
-    <div class="blob blob--2"></div>
-    <div class="blob blob--3"></div>
-  </div>
-
-  <!-- маленький ненавязчивый счётчик грустных треков подряд -->
-  <div class="corner-streak" id="cornerStreak">Грустных подряд: <b>0</b></div>
-
-  <div class="app-wrap">
-    <main class="player">
-
-      <div class="app-title"><span class="dot"></span> Vibe Player</div>
-
-      <div class="player-body">
-
-        <!-- ====== ЛЕВАЯ КОЛОНКА: СЕЙЧАС ИГРАЕТ + УПРАВЛЕНИЕ ====== -->
-        <div class="now-playing-panel">
-
-          <section class="now-playing">
-            <div class="cover" id="cover">
-              <div class="mood-ring"></div>
-              <span class="cover-icon" id="coverIcon">🎧</span>
-            </div>
-            <div class="track-title-row">
-              <div class="track-title" id="trackTitle">—</div>
-            </div>
-            <div class="track-artist" id="trackArtist">—</div>
-            <div class="mood-badge" id="moodBadge">
-              <span class="mood-dot" id="moodDot"></span>
-              <span id="moodLabel">—</span>
-            </div>
-          </section>
-
-          <!-- ====== КНОПКИ УПРАВЛЕНИЯ ====== -->
-          <section class="controls">
-            <button class="ctrl-btn" id="prevBtn" title="Предыдущая станция" aria-label="Предыдущая станция">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-            </button>
-
-            <button class="ctrl-btn play-btn" id="playBtn" title="Play/Pause" aria-label="Play/Pause">
-              <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            </button>
-
-            <button class="ctrl-btn" id="nextBtn" title="Следующая станция" aria-label="Следующая станция">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z"/></svg>
-            </button>
-          </section>
-
-        </div>
-
-        <!-- ====== ПРАВАЯ КОЛОНКА: СПИСОК СТАНЦИЙ НА ВСЮ ВЫСОТУ ====== -->
-        <div class="playlist-panel">
-          <div class="playlist-header">
-            <h2>Радиостанции</h2>
-            <span class="count" id="playlistCount">16 станций</span>
-          </div>
-          <ul class="playlist" id="playlist"></ul>
-        </div>
-
-      </div>
-
-    </main>
-  </div>
-
-  <!-- ====== МОДАЛКА "СМЕНИТЬ ВАЙБ?" ====== -->
-  <div class="modal-overlay" id="vibeModal">
-    <div class="modal glass">
-      <span class="modal-icon">🌤️</span>
-      <h3>Сменить вайб?</h3>
-      <p>Ты слушаешь уже 5 грустных радиостанций подряд. Может, включить что-то бодрое?</p>
-      <div class="modal-buttons">
-        <button class="btn-yes" id="btnYes">Да, хочу</button>
-        <button class="btn-no" id="btnNo">Нет, оставь</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="toast" id="toast"></div>
-
-  <!-- ====== ЭЛЕМЕНТЫ "ЭМОЦИОНАЛЬНОГО ПЕРЕХОДА" (Да, хочу) ====== -->
-  <div class="flash-overlay" id="flashOverlay"></div>
-  <div class="mood-update-banner" id="moodUpdateBanner">
-    <span class="sparkle">✨</span> Настроение обновлено <span class="sparkle">✨</span>
-  </div>
-
-  <!-- скрытый нативный audio-элемент, который реально управляет воспроизведением.
-       Громкость (fade in/out) регулируется напрямую через el.audio.volume
-       (см. раздел 4.1 в скрипте) — БЕЗ прогона звука через граф Web Audio API.
-
-       crossorigin здесь намеренно НЕ ставим и НЕ подключаем звук к
-       AudioContext.destination: плеер открывается локально с диска
-       (file://) и играет файлы из папки «Музыка» рядом с этим HTML.
-       Для такой связки (file:// + Web Audio) звук глохнет в любом случае —
-       либо из-за CORS-tainting (каждый file:// ресурс считается кросс-
-       доменным), либо потому что file: вообще не поддерживает CORS-запросы,
-       если поставить crossorigin. el.audio.volume же — обычное свойство
-       медиа-элемента, ему всё равно, локальный файл или удалённый: звук
-       просто играет через стандартный вывод браузера. -->
-  <audio id="audioEl" preload="auto"></audio>
-
+<div class="shell"><header><div class="brand">M<span>◦</span>OD</div><div class="session">Твой звук — твоё состояние</div></header>
+<main><section class="player glass" aria-label="Аудиоплеер"><div class="topline"><span class="eyebrow">Сейчас звучит</span><span class="tag" id="category"></span></div><div class="visual" aria-hidden="true"><div class="orb"><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div><h1 id="title"></h1><p class="artist" id="artist"></p><input class="seek" id="seek" type="range" min="0" max="32" step="0.1" value="0" aria-label="Позиция воспроизведения"><div class="times"><span id="elapsed">0:00</span><span>0:32</span></div><div class="controls"><button class="icon" id="previous" aria-label="Предыдущий трек"><svg viewBox="0 0 24 24"><path d="M5 5h3v14H5zm14 0v14L9 12z"/></svg></button><button class="icon play" id="play" aria-label="Воспроизвести"></button><button class="icon" id="next" aria-label="Следующий трек"><svg viewBox="0 0 24 24"><path d="M16 5h3v14h-3zM5 5l10 7-10 7z"/></svg></button></div><div class="tracking"><div><small id="streak">Грустных подряд: 0 из 5</small></div><div class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div></section>
+<section class="playlist glass" aria-label="Плейлист"><div class="listhead"><h2>На твоей волне</h2><span class="count">8 треков &nbsp; 4:16</span></div><ol id="tracks"></ol><div class="legend"><span>☾ Грустный &lt; 40</span><span>◦ Нейтральный 40–70</span><span>☀ Бодрый &gt; 70</span></div></section></main>
+<footer><span id="status" role="status" aria-live="polite"></span></footer></div>
+<dialog class="notice" id="notice" aria-labelledby="noticeTitle" aria-describedby="noticeText"><button class="notice-close" id="closeNotice" aria-label="Закрыть уведомление"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button><h2 id="noticeTitle">Сменим вайб?</h2><p id="noticeText">Ты послушал 5 грустных подряд. Предлагаю включить что-то бодрое</p><div class="actions"><button class="yes" id="yes">Да, хочу</button><button id="no">Нет, оставь</button></div></dialog>
+<audio id="audio" preload="auto"></audio>
 <script>
-(function(){
-  "use strict";
-
-  /* ============================================================
-     1. ДАННЫЕ "ПЛЕЙЛИСТА"
-     Настроение (mood) от 0 до 100:
-       < 40   — грустный
-       40-70  — нейтральный
-       > 70   — бодрый
-
-     ВАЖНО: здесь больше нет закачанных mp3-файлов конкретных исполнителей —
-     вместо них подключены живые интернет-радиостанции (SomaFM,
-     https://somafm.com). Это некоммерческие интернет-радио с собственной
-     лицензией на вещание: мы не храним и не раздаём сами ничьи записи,
-     а просто проигрываем чужой публичный поток по прямой ссылке — так
-     авторские права артистов не нарушаются. Жанр каждой станции подобран
-     под нужную категорию настроения (16 станций всего):
-       грустные/спокойные (< 40)  — Drone Zone, Deep Space One, Doomed,
-                                     The Dark Zone, n5MD Radio
-       нейтральные (40-70)        — Groove Salad, Illinois Street Lounge,
-                                     Lush, Suburbs of Goa, Bossa Beyond
-       бодрые (> 70)              — PopTron, Boot Liquor, Seven Inch Soul,
-                                     Indie Pop Rocks!, Heavyweight Reggae, Tiki Time
-     Поле src — прямая ссылка на mp3-поток станции, duration не нужен:
-     радио вещает непрерывно, а не проигрывает файл фиксированной длины
-     (см. "живой" индикатор вместо прогресс-бара в разделе 10).
-     ============================================================ */
-  const TRACKS = [
-    { id: 1, title: "Drone Zone", artist: "SomaFM · тёмный эмбиент", mood: 15, src: "https://ice5.somafm.com/dronezone-128-mp3" },
-    { id: 2, title: "Deep Space One", artist: "SomaFM · космический эмбиент", mood: 10, src: "https://ice5.somafm.com/deepspaceone-128-mp3" },
-    { id: 3, title: "Doomed", artist: "SomaFM · тёмный индастриал-эмбиент", mood: 5, src: "https://ice5.somafm.com/doomed-128-mp3" },
-    { id: 4, title: "The Dark Zone", artist: "SomaFM · мрачный дип-эмбиент", mood: 20, src: "https://ice5.somafm.com/darkzone-128-mp3" },
-    { id: 5, title: "n5MD Radio", artist: "SomaFM · эмбиент и пост-рок", mood: 30, src: "https://ice5.somafm.com/n5md-128-mp3" },
-    { id: 6, title: "Groove Salad", artist: "SomaFM · чилл-электроника", mood: 50, src: "https://ice5.somafm.com/groovesalad-128-mp3" },
-    { id: 7, title: "Illinois Street Lounge", artist: "SomaFM · лаунж-джаз", mood: 55, src: "https://ice5.somafm.com/illstreet-128-mp3" },
-    { id: 8, title: "Lush", artist: "SomaFM · мягкий электро-вокал", mood: 45, src: "https://ice5.somafm.com/lush-128-mp3" },
-    { id: 9, title: "Suburbs of Goa", artist: "SomaFM · азиатский world-бит", mood: 60, src: "https://ice5.somafm.com/suburbsofgoa-128-mp3" },
-    { id: 10, title: "Bossa Beyond", artist: "SomaFM · босса-нова", mood: 65, src: "https://ice5.somafm.com/bossa-128-mp3" },
-    { id: 11, title: "PopTron", artist: "SomaFM · танцевальный инди-поп", mood: 85, src: "https://ice5.somafm.com/poptron-128-mp3" },
-    { id: 12, title: "Boot Liquor", artist: "SomaFM · задорный кантри-рок", mood: 80, src: "https://ice5.somafm.com/bootliquor-128-mp3" },
-    { id: 13, title: "Seven Inch Soul", artist: "SomaFM · винтажный соул", mood: 88, src: "https://ice5.somafm.com/7soul-128-mp3" },
-    { id: 14, title: "Indie Pop Rocks!", artist: "SomaFM · инди-поп", mood: 82, src: "https://ice5.somafm.com/indiepop-128-mp3" },
-    { id: 15, title: "Heavyweight Reggae", artist: "SomaFM · регги и ска", mood: 78, src: "https://ice5.somafm.com/reggae-128-mp3" },
-    { id: 16, title: "Tiki Time", artist: "SomaFM · тропический тики", mood: 92, src: "https://ice5.somafm.com/tikitime-128-mp3" },
-  ];
-
-  const SAD_THRESHOLD = 40;
-  const HAPPY_THRESHOLD = 70;
-  const STREAK_TRIGGER = 5;
-  const DECLINE_LIMIT = 3;
-
-  const LS_DECLINE = "vibePlayer.declineCount";
-  const LS_DISABLED = "vibePlayer.disabled";
-
-  /* ============================================================
-     2. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
-     ============================================================ */
-  const state = {
-    currentIndex: 0,
-    isPlaying: false,
-    sadStreak: 0,
-    modalOpen: false,
-    seeking: false,
-    transitioning: false, // true во время "эмоционального перехода" (см. раздел 8.1)
-    loadFailStreak: 0, // сколько треков подряд не смогли загрузиться (см. раздел 10)
-  };
-
-  /* ============================================================
-     3. ССЫЛКИ НА DOM
-     ============================================================ */
-  const el = {
-    audio: document.getElementById("audioEl"),
-    cover: document.getElementById("cover"),
-    coverIcon: document.getElementById("coverIcon"),
-    trackTitle: document.getElementById("trackTitle"),
-    trackArtist: document.getElementById("trackArtist"),
-    moodBadge: document.getElementById("moodBadge"),
-    moodDot: document.getElementById("moodDot"),
-    moodLabel: document.getElementById("moodLabel"),
-    prevBtn: document.getElementById("prevBtn"),
-    playBtn: document.getElementById("playBtn"),
-    playIcon: document.getElementById("playIcon"),
-    nextBtn: document.getElementById("nextBtn"),
-    cornerStreak: document.getElementById("cornerStreak"),
-    playlist: document.getElementById("playlist"),
-    modal: document.getElementById("vibeModal"),
-    btnYes: document.getElementById("btnYes"),
-    btnNo: document.getElementById("btnNo"),
-    toast: document.getElementById("toast"),
-    moodLayerA: document.getElementById("moodLayerA"),
-    moodLayerB: document.getElementById("moodLayerB"),
-    flashOverlay: document.getElementById("flashOverlay"),
-    moodBanner: document.getElementById("moodUpdateBanner"),
-    playlistCount: document.getElementById("playlistCount"),
-  };
-
-  /* иконки play / pause одним svg-путём каждая */
-  const ICON_PLAY  = '<path d="M8 5v14l11-7z"/>';
-  const ICON_PAUSE = '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>';
-
-  /* ============================================================
-     4. ГЕНЕРАЦИЯ "ЗВУКА НАСТРОЕНИЯ" (Web Audio API)
-     Так как реальных аудиофайлов нет, для каждого трека
-     синтезируется короткая мелодия, характер которой зависит
-     от mood: чем ниже mood — тем медленнее и ниже по тону
-     (грустно), чем выше — тем быстрее и ярче (бодро).
-     Результат рендерится в WAV и подставляется в <audio src>,
-     поэтому дальше плеер работает как обычный HTML5-аудиоплеер
-     (currentTime, duration, события play/pause/ended и т.д.)
-     ============================================================ */
-  const AudioCtor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-
-  function lerp(a, b, t){ return a + (b - a) * t; }
-
-  async function synthesizeTrack(track){
-    const sampleRate = 44100;
-    const duration = track.duration;
-    const ctx = new AudioCtor(1, Math.ceil(sampleRate * duration), sampleRate);
-    const energy = track.mood / 100;
-
-    // длительность одной "ноты" — грустные треки медленнее, бодрые быстрее
-    const noteLen = lerp(0.85, 0.22, energy);
-    // базовая частота — грустные треки ниже, бодрые выше
-    const baseFreq = 190 + track.mood * 1.4;
-
-    let pattern;
-    let waveType;
-    if (track.mood < SAD_THRESHOLD){
-      pattern = [1, 1, 1.19, 1];       // тягучее, минорное покачивание
-      waveType = "sine";
-    } else if (track.mood > HAPPY_THRESHOLD){
-      pattern = [1, 1.25, 1.5, 2, 1.5, 1.25]; // яркое арпеджио вверх-вниз
-      waveType = "triangle";
-    } else {
-      pattern = [1, 1.25, 1.5, 1.25];  // спокойный нейтральный мотив
-      waveType = "sine";
-    }
-
-    const master = ctx.createGain();
-    master.gain.value = 0.22;
-    master.connect(ctx.destination);
-
-    let t = 0;
-    let i = 0;
-    while (t < duration - 0.05){
-      const freq = baseFreq * pattern[i % pattern.length];
-      const osc = ctx.createOscillator();
-      osc.type = waveType;
-      osc.frequency.value = freq;
-
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.85, t + noteLen * 0.3);
-      g.gain.linearRampToValueAtTime(0, t + noteLen * 0.95);
-
-      osc.connect(g);
-      g.connect(master);
-      osc.start(t);
-      osc.stop(t + noteLen);
-
-      t += noteLen;
-      i++;
-    }
-
-    const rendered = await ctx.startRendering();
-    return bufferToWavBlobUrl(rendered);
+'use strict';
+// Ровно 8 треков. Первые пять позволяют последовательно проверить уведомление.
+const tracks = [
+ {title:'После дождя',artist:'MOOD Studio · piano',mood:22,root:220},
+ {title:'Тихие улицы',artist:'MOOD Studio · ambient',mood:18,root:196},
+ {title:'Неотправленное',artist:'MOOD Studio · keys',mood:31,root:246.94},
+ {title:'Между нами',artist:'MOOD Studio · slow waves',mood:27,root:174.61},
+ {title:'Последний свет',artist:'MOOD Studio · nocturne',mood:35,root:164.81},
+ {title:'В своём ритме',artist:'MOOD Studio · chill',mood:56,root:261.63},
+ {title:'Навстречу солнцу',artist:'MOOD Studio · bright keys',mood:86,root:293.66},
+ {title:'Новый день',artist:'MOOD Studio · upbeat',mood:94,root:329.63}
+];
+const $=id=>document.getElementById(id), audio=$('audio');
+const state={index:0,streak:0,counted:false,declines:0};
+// Новая версия счётчика: прежняя ошибочно учитывала крестик как отказ.
+// Старое отключение не переносим; новые явные отказы сохраняем в сессии.
+const storageKey='mood-player.explicit-declines.v2';
+// В закрытых режимах storage может быть недоступен: сохраняем работу в памяти.
+try{state.declines=Math.max(0,Number(sessionStorage.getItem(storageKey))||0)}catch(e){}
+const category=m=>m<40?'sad':m<=70?'neutral':'happy';
+const labels={sad:'Грустный',neutral:'Нейтральный',happy:'Бодрый'};
+const symbols={sad:'☾',neutral:'◦',happy:'☀'};
+const urls=new Map();
+// Создаём настоящий WAV в памяти. Весь звук самодостаточен, без сетевых запросов.
+// Мелодии различаются тональностью, темпом и минорным/мажорным ладом.
+function trackUrl(index){
+ if(urls.has(index))return urls.get(index);
+ const track=tracks[index],rate=16000,duration=32,length=rate*duration;
+ const buffer=new ArrayBuffer(44+length*2),view=new DataView(buffer);
+ const write=(offset,text)=>{for(let i=0;i<text.length;i++)view.setUint8(offset+i,text.charCodeAt(i))};
+ write(0,'RIFF');view.setUint32(4,36+length*2,true);write(8,'WAVE');write(12,'fmt ');
+ view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);
+ view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);write(36,'data');view.setUint32(40,length*2,true);
+ const happy=track.mood>70,scale=track.mood<40?[0,3,7,10,7,3,5,2]:[0,4,7,12,7,9,4,2],beat=happy?.3:.6;
+ for(let i=0;i<length;i++){
+  const t=i/rate,n=Math.floor(t/beat),local=t%beat,f=track.root*2**(scale[(n+index)%scale.length]/12);
+  const envelope=Math.min(1,local/.015)*Math.exp(-local*6);
+  const melody=(Math.sin(2*Math.PI*f*t)+.18*Math.sin(4*Math.PI*f*t))*.19*envelope;
+  const pad=(Math.sin(Math.PI*track.root*t)+Math.sin(Math.PI*track.root*2**(7/12)*t))*.045;
+  const pulse=happy?Math.sin(2*Math.PI*70*(t%beat))*.07*Math.exp(-(t%beat)*25):0;
+  const fade=Math.min(1,t/.1,(duration-t)/.4);
+  view.setInt16(44+i*2,Math.max(-1,Math.min(1,(melody+pad+pulse)*fade))*32767,true);
+ }
+ const url=URL.createObjectURL(new Blob([buffer],{type:'audio/wav'}));urls.set(index,url);return url;
+}
+function render(){
+ const track=tracks[state.index],kind=category(track.mood);
+ document.body.dataset.mood=kind;
+ $('title').textContent=track.title;$('artist').textContent=track.artist;
+ $('category').textContent=`${symbols[kind]} ${labels[kind]} · ${track.mood}`;
+ document.querySelectorAll('.track').forEach((button,i)=>{button.classList.toggle('active',i===state.index);button.setAttribute('aria-current',String(i===state.index))});
+ $('streak').textContent=`Грустных подряд: ${state.streak}`;
+ const progress=state.streak===0?0:((state.streak-1)%5)+1;
+ document.querySelectorAll('.dots i').forEach((dot,i)=>dot.classList.toggle('on',i<progress));
+}
+function renderPlayback(){
+ const playing=!audio.paused;document.body.classList.toggle('playing',playing);
+ $('play').setAttribute('aria-label',playing?'Пауза':'Воспроизвести');
+ $('play').innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${playing?'M6 4h4v16H6zm8 0h4v16h-4z':'M8 4l12 8-12 8z'}"/></svg>`;
+}
+// Считаем только начавшееся воспроизведение, один раз на выбор трека.
+// Пауза, возобновление и перемотка не увеличивают счётчик.
+audio.addEventListener('playing',()=>{
+ if(!state.counted){state.counted=true;state.streak=tracks[state.index].mood<40?state.streak+1:0;render();
+  // Предлагаем смену настроения строго на 5, 10, 15… треках серии.
+  if(state.streak>0&&state.streak%5===0&&state.declines<3&&!$('notice').open){
+   $('noticeText').textContent=`Ты послушал ${state.streak} грустных подряд. Предлагаю включить что-то бодрое`;
+   $('notice').showModal();
   }
-
-  // кодирование AudioBuffer в WAV (PCM 16-bit) и создание blob-URL
-  function bufferToWavBlobUrl(audioBuffer){
-    const numChannels = audioBuffer.numberOfChannels;
-    const sampleRate = audioBuffer.sampleRate;
-    const samples = audioBuffer.getChannelData(0);
-    const bytesPerSample = 2;
-    const blockAlign = numChannels * bytesPerSample;
-    const dataSize = samples.length * blockAlign;
-
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
-
-    function writeStr(offset, str){
-      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-    }
-
-    writeStr(0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
-    writeStr(8, "WAVE");
-    writeStr(12, "fmt ");
-    view.setUint32(16, 16, true);       // subchunk size
-    view.setUint16(20, 1, true);        // PCM
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);       // bits per sample
-    writeStr(36, "data");
-    view.setUint32(40, dataSize, true);
-
-    let offset = 44;
-    for (let i = 0; i < samples.length; i++){
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      offset += 2;
-    }
-
-    const blob = new Blob([view], { type: "audio/wav" });
-    return URL.createObjectURL(blob);
-  }
-
-  // кэш сгенерированных/реальных ссылок на аудио, чтобы не пересчитывать повторно
-  async function getTrackUrl(track){
-    if (track.src) return track.src;           // пользователь подставил свой файл
-    if (track._generatedUrl) return track._generatedUrl; // уже сгенерировано
-    track._generatedUrl = await synthesizeTrack(track);
-    return track._generatedUrl;
-  }
-
-  /* ============================================================
-     4.1 ПЛАВНОЕ УПРАВЛЕНИЕ ГРОМКОСТЬЮ (fade in / fade out)
-
-     Раньше здесь был "живой" граф Web Audio API: <audio> ->
-     MediaElementSourceNode -> GainNode -> destination, и громкость
-     менялась через gainNode.gain.linearRampToValueAtTime(...).
-
-     Это отлично работает, когда страница открыта по http(s) —
-     но плеер открывается локально с диска (file://) и играет ЛОКАЛЬНЫЕ
-     mp3 из папки «Музыка». А для file:// это две несовместимые проблемы:
-       1) MediaElementSourceNode считает файл кросс-доменным (у каждого
-          file:// ресурса свой "opaque" origin) и по спецификации ГЛУШИТ
-          звук — трек "играет" (currentTime растёт), но не слышно ничего.
-       2) Если добавить crossorigin="anonymous" (как для внешних https-
-          ссылок), браузер вообще откажется грузить файл: CORS-запросы
-          в принципе не поддерживаются для протокола file: — только
-          data/http/https и ещё пара схем.
-     То есть с локальными файлами Web Audio-граф для живого звука не
-     работает НИ С crossorigin, НИ без него — единственный рабочий
-     вариант — управлять громкостью напрямую через el.audio.volume
-     (это обычное свойство HTMLMediaElement, ему всё равно, локальный
-     файл или удалённый, никакого CORS не требует). Плавность делаем
-     сами через requestAnimationFrame.
-
-     Синтез тона (OfflineAudioContext, см. выше) эта проблема не
-     затрагивает — он ничего не подключает к живому выводу.
-     ============================================================ */
-  let volumeAnimFrame = null;
-
-  function cancelVolumeAnimation(){
-    if (volumeAnimFrame !== null){
-      cancelAnimationFrame(volumeAnimFrame);
-      volumeAnimFrame = null;
-    }
-  }
-
-  // плавно меняет el.audio.volume с текущего значения до target за duration мс;
-  // возвращает Promise, который резолвится, когда анимация завершена
-  function fadeVolumeTo(target, durationMs){
-    cancelVolumeAnimation();
-    const from = el.audio.volume;
-    if (durationMs <= 0){
-      el.audio.volume = target;
-      return Promise.resolve();
-    }
-    const start = performance.now();
-    return new Promise((resolve) => {
-      function step(now){
-        const t = Math.min(1, (now - start) / durationMs);
-        el.audio.volume = from + (target - from) * t;
-        if (t < 1){
-          volumeAnimFrame = requestAnimationFrame(step);
-        } else {
-          volumeAnimFrame = null;
-          resolve();
-        }
-      }
-      volumeAnimFrame = requestAnimationFrame(step);
-    });
-  }
-
-  function wait(ms){
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /* ============================================================
-     5. УТИЛИТЫ
-     ============================================================ */
-  function formatTime(sec){
-    if (!isFinite(sec) || sec < 0) sec = 0;
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return m + ":" + String(s).padStart(2, "0");
-  }
-
-  function moodCategory(mood){
-    if (mood < SAD_THRESHOLD) return "sad";
-    if (mood > HAPPY_THRESHOLD) return "happy";
-    return "neutral";
-  }
-
-  function moodMeta(mood){
-    const cat = moodCategory(mood);
-    if (cat === "sad")    return { label: "грустный",     color: "var(--sad)",     icon: "☔",  emoji: "😢" };
-    if (cat === "happy")  return { label: "бодрый",       color: "var(--happy)",   icon: "⚡",  emoji: "😊" };
-    return                       { label: "нейтральный",  color: "var(--neutral)", icon: "🌥️", emoji: "😐" };
-  }
-
-  /* ------------------------------------------------------------
-     Динамический фон: градиент под текущий mood.
-     Ключи должны совпадать с тем, что возвращает moodCategory().
-     ------------------------------------------------------------ */
-  const MOOD_GRADIENTS = {
-    sad:     ["#1a1a2e", "#16213e"],
-    neutral: ["#2d2d44", "#3d3d5c"],
-    happy:   ["#ff6b35", "#f7931e"],
-  };
-
-  let activeMoodLayer = "A"; // какой из двух слоёв сейчас видим
-
-  function setMoodBackground(category){
-    const stops = MOOD_GRADIENTS[category];
-    const css = "linear-gradient(135deg, " + stops[0] + ", " + stops[1] + ")";
-
-    const current = activeMoodLayer === "A" ? el.moodLayerA : el.moodLayerB;
-    const next = activeMoodLayer === "A" ? el.moodLayerB : el.moodLayerA;
-
-    if (current.dataset.category === category){
-      return; // фон уже соответствует нужному настроению — ничего не делаем
-    }
-
-    next.style.background = css;
-    next.dataset.category = category;
-    next.classList.add("active");   // плавно проявляем новый слой (opacity 0 -> 1)
-    current.classList.remove("active"); // и прячем старый
-
-    activeMoodLayer = activeMoodLayer === "A" ? "B" : "A";
-  }
-
-  function showToast(msg){
-    el.toast.textContent = msg;
-    el.toast.classList.add("show");
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => el.toast.classList.remove("show"), 2600);
-  }
-
-  /* ============================================================
-     6. РЕНДЕР ПЛЕЙЛИСТА
-     ============================================================ */
-  function renderPlaylist(){
-    el.playlist.innerHTML = "";
-    TRACKS.forEach((track, idx) => {
-      const meta = moodMeta(track.mood);
-      const li = document.createElement("li");
-      li.className = "track-item" + (idx === state.currentIndex ? " active" : "");
-      li.dataset.index = idx;
-      li.innerHTML =
-        '<span class="num">' + (idx + 1) + '</span>' +
-        '<span class="mood-chip" style="background:' + meta.color + '; color:' + meta.color + '"></span>' +
-        '<span class="meta">' +
-          '<div class="t-title">' + track.title + '</div>' +
-          '<div class="t-artist">' + track.artist + '</div>' +
-        '</span>' +
-        (idx === state.currentIndex && state.isPlaying
-          ? '<span class="now-eq"><span></span><span></span><span></span></span>'
-          : '');
-      li.addEventListener("click", () => selectTrack(idx));
-      el.playlist.appendChild(li);
-    });
-  }
-
-  /* ============================================================
-     7. ОТРИСОВКА ТЕКУЩЕГО ТРЕКА / UI
-     ============================================================ */
-  function renderNowPlaying(){
-    const track = TRACKS[state.currentIndex];
-    const meta = moodMeta(track.mood);
-    const category = moodCategory(track.mood);
-
-    el.trackTitle.textContent = track.title;
-    el.trackArtist.textContent = track.artist;
-    el.moodLabel.textContent = meta.label;
-    el.moodDot.style.background = meta.color;
-    el.moodDot.style.color = meta.color;
-    el.moodBadge.style.color = meta.color;
-    el.moodBadge.style.borderColor = meta.color;
-    el.coverIcon.textContent = meta.icon;
-    el.cover.style.setProperty("--mood-glow", meta.color); // цвет свечения и кольца настроения
-
-    setMoodBackground(category); // плавная смена фона под mood трека
-  }
-
-  function renderStreak(){
-    // маленький ненавязчивый счётчик в углу экрана
-    el.cornerStreak.innerHTML = "Грустных подряд: <b>" + state.sadStreak + "</b>";
-    el.cornerStreak.classList.toggle("warn", state.sadStreak >= STREAK_TRIGGER - 1 && state.sadStreak > 0);
-  }
-
-  function renderPlayState(){
-    el.playIcon.innerHTML = state.isPlaying ? ICON_PAUSE : ICON_PLAY;
-    el.playBtn.classList.toggle("is-playing", state.isPlaying);
-    el.cover.classList.toggle("spinning", state.isPlaying);
-  }
-
-  /* ============================================================
-     8. ЛОГИКА ЭМОЦИОНАЛЬНОГО ТРЕКИНГА
-     ============================================================ */
-  function isVibeCheckDisabled(){
-    return sessionStorage.getItem(LS_DISABLED) === "1";
-  }
-
-  function registerMoodForCurrentTrack(){
-    const track = TRACKS[state.currentIndex];
-    if (track.mood < SAD_THRESHOLD){
-      state.sadStreak++;
-    } else {
-      state.sadStreak = 0;
-    }
-    renderStreak();
-
-    if (state.sadStreak >= STREAK_TRIGGER && !state.modalOpen && !isVibeCheckDisabled()){
-      openVibeModal();
-    }
-  }
-
-  function openVibeModal(){
-    state.modalOpen = true;
-    el.modal.classList.add("open");
-  }
-
-  function closeVibeModal(){
-    state.modalOpen = false;
-    el.modal.classList.remove("open");
-  }
-
-  el.btnYes.addEventListener("click", () => {
-    closeVibeModal();
-    const happyTracks = TRACKS
-      .map((t, i) => ({ t, i }))
-      .filter(({ t }) => t.mood > HAPPY_THRESHOLD);
-    if (happyTracks.length === 0) return; // на всякий случай
-    const choice = happyTracks[Math.floor(Math.random() * happyTracks.length)];
-    emotionalTransition(choice.i);
-  });
-
-  el.btnNo.addEventListener("click", () => {
-    state.sadStreak = 0; // сбрасываем счётчик
-    renderStreak();
-    closeVibeModal();
-
-    const declineCount = parseInt(sessionStorage.getItem(LS_DECLINE) || "0", 10) + 1;
-    sessionStorage.setItem(LS_DECLINE, String(declineCount));
-
-    if (declineCount >= DECLINE_LIMIT){
-      sessionStorage.setItem(LS_DISABLED, "1");
-      showToast("Хорошо, больше не будем спрашивать в этой сессии");
-    }
-  });
-
-  /* ============================================================
-     8.1 "ЭМОЦИОНАЛЬНЫЙ ПЕРЕХОД" — срабатывает по кнопке "Да, хочу"
-     Сценарий:
-       1) текущий трек плавно затухает до тишины (2 сек, через GainNode)
-       2) экран на ~1 секунду вспыхивает белым
-       3) новый бодрый трек стартует и плавно нарастает по громкости
-       4) на экране на 2 секунды появляется надпись «Настроение обновлено ✨»
-     ============================================================ */
-  const FADE_OUT_SEC = 2;   // длительность затухания текущего трека
-  const FADE_IN_SEC = 2;    // длительность нарастания громкости нового трека
-  const FLASH_MS = 1000;    // длительность белой вспышки
-  const BANNER_MS = 2000;   // сколько висит надпись "Настроение обновлено"
-
-  function triggerFlash(){
-    // сбрасываем возможную предыдущую анимацию и запускаем заново
-    el.flashOverlay.classList.remove("flash-in", "flash-out");
-    void el.flashOverlay.offsetWidth; // форсируем reflow, чтобы transition точно перезапустился
-
-    el.flashOverlay.classList.add("flash-in");     // быстро "вспыхиваем" добела
-    setTimeout(() => {
-      el.flashOverlay.classList.remove("flash-in");
-      el.flashOverlay.classList.add("flash-out");   // и плавно гасим
-    }, FLASH_MS * 0.3);
-    setTimeout(() => {
-      el.flashOverlay.classList.remove("flash-out");
-    }, FLASH_MS);
-  }
-
-  function showMoodUpdatedBanner(){
-    el.moodBanner.classList.add("show");
-    clearTimeout(showMoodUpdatedBanner._t);
-    showMoodUpdatedBanner._t = setTimeout(() => {
-      el.moodBanner.classList.remove("show");
-    }, BANNER_MS);
-  }
-
-  async function emotionalTransition(newIndex){
-    if (state.transitioning) return; // не даём запустить переход дважды одновременно
-    state.transitioning = true;
-
-    // блокируем управление на время перехода — иначе пользователь может
-    // сбить запланированные rampы громкости ручным Play/Next/Prev
-    el.playBtn.disabled = true;
-    el.prevBtn.disabled = true;
-    el.nextBtn.disabled = true;
-
-    // --- 1. плавное затухание текущего трека до тишины за FADE_OUT_SEC секунд ---
-    await fadeVolumeTo(0, FADE_OUT_SEC * 1000);
-    el.audio.pause(); // трек полностью затих — можно останавливать
-
-    // --- 2. белая вспышка (1 сек) + текстовый баннер ---
-    triggerFlash();
-    showMoodUpdatedBanner();
-
-    // --- 3. переключаемся на новый бодрый трек и запускаем его с нуля громкости ---
-    state.currentIndex = newIndex;
-    const track = TRACKS[newIndex];
-    const myToken = ++loadToken;
-
-    renderNowPlaying();
-    renderPlaylist();
-    registerMoodForCurrentTrack(); // трек бодрый -> sadStreak корректно сбросится
-
-    try {
-      const url = await getTrackUrl(track);
-      if (myToken !== loadToken) return; // трек успели сменить ещё раз — прерываемся
-
-      el.audio.src = url;
-      el.audio.currentTime = 0;
-      el.audio.volume = 0; // громкость с нуля — дальше плавно поднимем её вверх
-
-      await playAudio({ resetGain: false }); // не даём playAudio сбросить громкость на 1 сразу
-
-      // --- нарастание громкости нового трека за FADE_IN_SEC секунд ---
-      await fadeVolumeTo(1, FADE_IN_SEC * 1000);
-    } finally {
-      state.transitioning = false;
-      if (myToken === loadToken){
-        el.playBtn.disabled = false;
-        el.prevBtn.disabled = false;
-        el.nextBtn.disabled = false;
-      }
-    }
-  }
-
-  /* ============================================================
-     9. ВОСПРОИЗВЕДЕНИЕ / НАВИГАЦИЯ
-     ============================================================ */
-  let loadToken = 0; // защита от гонки, если пользователь быстро щёлкает треки
-
-  async function loadTrack(index, autoplay){
-    state.currentIndex = index;
-    const track = TRACKS[index];
-    const myToken = ++loadToken;
-
-    renderNowPlaying();
-    renderPlaylist();
-    registerMoodForCurrentTrack();
-
-    el.playBtn.disabled = true;
-    try {
-      const url = await getTrackUrl(track);
-      if (myToken !== loadToken) return; // за время генерации трек уже сменился
-      el.audio.src = url;
-      el.audio.currentTime = 0;
-      if (autoplay){
-        await playAudio();
-      } else {
-        state.isPlaying = false;
-        renderPlayState();
-      }
-    } finally {
-      if (myToken === loadToken) el.playBtn.disabled = false;
-    }
-  }
-
-  async function playAudio(opts){
-    // resetGain: true (по умолчанию) — обычный Play всегда включает
-    // трек на полной громкости. Передают resetGain:false только из
-    // emotionalTransition(), у которой свой плавный fade-in.
-    const resetGain = !opts || opts.resetGain !== false;
-
-    if (resetGain){
-      cancelVolumeAnimation();
-      el.audio.volume = 1;
-    }
-
-    try {
-      await el.audio.play();
-      state.isPlaying = true;
-    } catch (err){
-      // автовоспроизведение могло быть блокировано браузером —
-      // это нормально, пользователь просто нажмёт Play вручную
-      state.isPlaying = false;
-    }
-    renderPlayState();
-    renderPlaylist();
-  }
-
-  function pauseAudio(){
-    el.audio.pause();
-    state.isPlaying = false;
-    renderPlayState();
-    renderPlaylist();
-  }
-
-  function togglePlay(){
-    if (state.transitioning) return; // во время эмоционального перехода вручную не вмешиваемся
-    if (!el.audio.src){
-      loadTrack(state.currentIndex, true);
-      return;
-    }
-    if (state.isPlaying) pauseAudio();
-    else playAudio();
-  }
-
-  function nextTrack(){
-    if (state.transitioning) return;
-    const wasPlaying = state.isPlaying || !el.audio.src;
-    const nextIndex = (state.currentIndex + 1) % TRACKS.length;
-    loadTrack(nextIndex, wasPlaying);
-  }
-
-  function prevTrack(){
-    if (state.transitioning) return;
-    const wasPlaying = state.isPlaying || !el.audio.src;
-    const prevIndex = (state.currentIndex - 1 + TRACKS.length) % TRACKS.length;
-    loadTrack(prevIndex, wasPlaying);
-  }
-
-  function selectTrack(index, forcePlay){
-    if (state.transitioning) return;
-    if (index === state.currentIndex && el.audio.src){
-      forcePlay ? playAudio() : togglePlay();
-      return;
-    }
-    // при выборе нового трека из плейлиста он сразу начинает играть
-    loadTrack(index, true);
-  }
-
-  /* ============================================================
-     10. СОБЫТИЯ АУДИО-ПОТОКА
-     Радио вещает непрерывно, поэтому прогресс-бара/перемотки здесь нет —
-     только сброс счётчика ошибок при успешном подключении и обработка
-     обрывов потока (см. коммент к error ниже).
-     ============================================================ */
-  // метаданные потока реально прочитались — значит соединение установлено,
-  // сбрасываем счётчик подряд идущих ошибок
-  el.audio.addEventListener("loadedmetadata", () => {
-    state.loadFailStreak = 0;
-  });
-
-  // для живого потока "ended" в норме не происходит (он не заканчивается),
-  // но на всякий случай (обрыв соединения сервером) ведём себя как обычно —
-  // переходим к следующей станции
-  el.audio.addEventListener("ended", () => {
-    nextTrack();
-  });
-
-  // поток не смог подключиться (нет сети, станция временно недоступна,
-  // блокировка файрволом/расширением и т.п.) — пробуем следующую станцию.
-  // НО: если ошибки идут подряд на нескольких станциях (типичный признак
-  // проблемы с самим интернет-соединением), автопереход по кругу ничего
-  // не даст и просто будет бесконечно листать список. В этом случае молча
-  // останавливаемся вместо бесконечного зацикливания.
-  const LOAD_FAIL_STREAK_LIMIT = 3;
-  el.audio.addEventListener("error", () => {
-    if (state.transitioning) return; // не мешаем эмоциональному переходу
-    state.loadFailStreak++;
-    state.isPlaying = false;
-    renderPlayState();
-
-    if (state.loadFailStreak >= LOAD_FAIL_STREAK_LIMIT){
-      return; // не пытаемся играть дальше — все попытки подряд провалились
-    }
-
-    const track = TRACKS[state.currentIndex];
-    showToast("Не удалось подключиться к «" + track.title + "» — пробуем следующую станцию");
-    setTimeout(() => { if (!state.transitioning) nextTrack(); }, 1200);
-  });
-
-  /* ============================================================
-     11. ПРИВЯЗКА КНОПОК
-     ============================================================ */
-  el.playBtn.addEventListener("click", togglePlay);
-  el.nextBtn.addEventListener("click", nextTrack);
-  el.prevBtn.addEventListener("click", prevTrack);
-
-  /* ============================================================
-     12. ИНИЦИАЛИЗАЦИЯ
-     ============================================================ */
-  // склонение "N станций/станция/станции" для заголовка списка
-  function pluralizeStations(n){
-    const mod10 = n % 10;
-    const mod100 = n % 100;
-    if (mod10 === 1 && mod100 !== 11) return n + " станция";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return n + " станции";
-    return n + " станций";
-  }
-
-  function init(){
-    el.playlistCount.textContent = pluralizeStations(TRACKS.length);
-
-    // грузим первый трек через loadTrack (а не рендерим руками!), чтобы
-    // настроение первого трека учлось в счётчике sadStreak ровно один раз
-    // и не задвоилось при первом нажатии Play (см. togglePlay)
-    loadTrack(state.currentIndex, false);
-
-    // если пользователь уже 3 раза отказался в этой сессии — тихо предупредим в консоли
-    if (isVibeCheckDisabled()){
-      console.info("Vibe Player: уведомления о смене вайба отключены на эту сессию.");
-    }
-  }
-
-  init();
-})();
+ }
+ renderPlayback();
+});
+async function play(){try{await audio.play();$('status').textContent='Музыка в твоём ритме'}catch(e){if(e.name!=='AbortError')$('status').textContent='Не удалось включить звук. Нажми Play ещё раз.'}}
+function select(index,autoplay=true){
+ audio.pause();state.index=(index+tracks.length)%tracks.length;state.counted=false;
+ audio.src=trackUrl(state.index);$('seek').value=0;updateSeekFill();$('elapsed').textContent='0:00';render();renderPlayback();if(autoplay)play();
+}
+tracks.forEach((track,i)=>{
+ const li=document.createElement('li'),button=document.createElement('button'),kind=category(track.mood);
+ button.className='track';button.innerHTML=`<span class="number">${String(i+1).padStart(2,'0')}</span><span><span class="title">${track.title}</span><span class="by">${track.artist}</span></span><span class="mood ${kind}">${symbols[kind]} ${track.mood}</span>`;
+ button.setAttribute('aria-label',`${track.title}, ${track.artist}, ${labels[kind]}, mood ${track.mood}`);
+ button.onclick=()=>i===state.index?(audio.paused?play():audio.pause()):select(i);
+ li.append(button);$('tracks').append(li);
+});
+$('play').onclick=()=>audio.paused?play():audio.pause();
+$('next').onclick=()=>select(state.index+1);$('previous').onclick=()=>select(state.index-1);
+audio.addEventListener('pause',renderPlayback);audio.addEventListener('ended',()=>select(state.index+1));
+audio.addEventListener('error',()=>{$('status').textContent='Ошибка воспроизведения. Попробуй другой трек.';renderPlayback()});
+const time=seconds=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
+function updateSeekFill(){$('seek').style.setProperty('--progress',`${Number($('seek').value)/Number($('seek').max)*100}%`)}
+audio.addEventListener('timeupdate',()=>{$('seek').value=audio.currentTime;updateSeekFill();$('elapsed').textContent=time(audio.currentTime)});
+$('seek').oninput=()=>{updateSeekFill();if(Number.isFinite(audio.duration))audio.currentTime=Number($('seek').value)};
+// После третьего отказа запрет сохраняется при перезагрузке в этой вкладке.
+function decline(){
+ // Отказ сохраняет серию: следующее предложение — через пять треков.
+ $('notice').close();state.declines++;
+ try{sessionStorage.setItem(storageKey,String(state.declines))}catch(e){}
+ $('status').textContent=state.declines>=3?'Предложения отключены до конца сессии':'Остаёмся в твоём настроении';render();
+}
+$('no').onclick=decline;
+// Закрытие не является отказом и не отключает будущие предложения.
+function dismissNotice(){$('notice').close()}
+$('closeNotice').onclick=dismissNotice;
+$('notice').addEventListener('cancel',event=>{event.preventDefault();dismissNotice()});
+$('yes').onclick=()=>{
+ $('notice').close();state.streak=0;
+ const upbeat=tracks.map((t,i)=>t.mood>70?i:-1).filter(i=>i>=0);
+ select(upbeat[Math.floor(Math.random()*upbeat.length)]);
+};
+select(0,false);
 </script>
-</body>
-</html>
+</body></html>
