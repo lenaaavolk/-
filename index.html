@@ -606,61 +606,6 @@
     transform: translateX(-50%) translateY(0);
   }
 
-  /* крупный диагностический баннер: показываем один раз, если НИ ОДИН
-     трек не смог загрузиться подряд — например, Safari по умолчанию
-     блокирует локальным HTML-файлам доступ к соседним файлам (см. п.10) */
-  .load-error-banner{
-    position: fixed;
-    top: 20px;
-    left: 50%;
-    transform: translateX(-50%) translateY(-12px);
-    width: min(92vw, 480px);
-    background: rgba(24,20,30,0.94);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,140,90,0.35);
-    border-radius: 16px;
-    padding: 18px 20px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity .35s ease, transform .35s ease;
-    z-index: 80;
-  }
-  .load-error-banner.show{
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-    pointer-events: auto;
-  }
-  .load-error-banner h4{
-    margin: 0 0 8px;
-    font-size: 15px;
-    color: #ffb37a;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .load-error-banner p{
-    margin: 0 0 10px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-dim);
-  }
-  .load-error-banner p:last-of-type{ margin-bottom: 0; }
-  .load-error-banner .close-banner{
-    position: absolute;
-    top: 10px;
-    right: 12px;
-    background: transparent;
-    border: none;
-    color: var(--text-dim);
-    font-size: 18px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 4px;
-  }
-  .load-error-banner .close-banner:hover{ color: #fff; }
-
   /* на планшетах/узких окнах колонки складываются друг под друга */
   @media (max-width: 860px){
     .app-wrap{ align-items: flex-start; padding: 20px 16px; }
@@ -759,7 +704,7 @@
   <div class="corner-streak" id="cornerStreak">Грустных подряд: <b>0</b></div>
 
   <div class="app-wrap">
-    <main class="player glass">
+    <main class="player">
 
       <div class="app-title"><span class="dot"></span> Vibe Player</div>
 
@@ -828,19 +773,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-
-  <!-- Диагностический баннер: появляется, только если подряд не смогли
-       подключиться несколько радиостанций — обычно это проблема сети
-       (нет интернета, блокировка стриминга файрволом/VPN, рекламный
-       блокировщик режет аудиопотоки, или конкретная станция временно
-       недоступна). Объясняем причину, вместо того чтобы плеер молча
-       листал станции одну за другой по кругу. -->
-  <div class="load-error-banner" id="loadErrorBanner">
-    <button class="close-banner" id="closeLoadErrorBanner" aria-label="Закрыть">✕</button>
-    <h4>⚠️ Радиостанции не подключаются</h4>
-    <p>Не получилось подключиться сразу к нескольким станциям подряд. Обычно дело в интернет-соединении — проверьте его, а также отключите VPN или блокировщик рекламы, если он у вас включён (некоторые блокируют аудиопотоки).</p>
-    <p>Если соединение в порядке — возможно, эти конкретные станции временно недоступны. Закройте это окно и попробуйте нажать Play ещё раз чуть позже.</p>
-  </div>
 
   <!-- ====== ЭЛЕМЕНТЫ "ЭМОЦИОНАЛЬНОГО ПЕРЕХОДА" (Да, хочу) ====== -->
   <div class="flash-overlay" id="flashOverlay"></div>
@@ -953,8 +885,6 @@
     btnYes: document.getElementById("btnYes"),
     btnNo: document.getElementById("btnNo"),
     toast: document.getElementById("toast"),
-    loadErrorBanner: document.getElementById("loadErrorBanner"),
-    closeLoadErrorBanner: document.getElementById("closeLoadErrorBanner"),
     moodLayerA: document.getElementById("moodLayerA"),
     moodLayerB: document.getElementById("moodLayerB"),
     flashOverlay: document.getElementById("flashOverlay"),
@@ -1509,10 +1439,9 @@
      обрывов потока (см. коммент к error ниже).
      ============================================================ */
   // метаданные потока реально прочитались — значит соединение установлено,
-  // сбрасываем счётчик подряд идущих ошибок и прячем баннер, если он был показан
+  // сбрасываем счётчик подряд идущих ошибок
   el.audio.addEventListener("loadedmetadata", () => {
     state.loadFailStreak = 0;
-    hideLoadErrorBanner();
   });
 
   // для живого потока "ended" в норме не происходит (он не заканчивается),
@@ -1523,13 +1452,11 @@
   });
 
   // поток не смог подключиться (нет сети, станция временно недоступна,
-  // блокировка файрволом/расширением и т.п.) — сообщаем об этом явно,
-  // а не оставляем плеер молча "зависшим" на паузе, и пробуем следующую
-  // станцию. НО: если ошибки идут подряд на нескольких станциях (типичный
-  // признак проблемы с самим интернет-соединением), автопереход по кругу
-  // ничего не даст и просто будет бесконечно листать список. В этом
-  // случае останавливаемся и показываем понятное объяснение вместо тихого
-  // зацикливания.
+  // блокировка файрволом/расширением и т.п.) — пробуем следующую станцию.
+  // НО: если ошибки идут подряд на нескольких станциях (типичный признак
+  // проблемы с самим интернет-соединением), автопереход по кругу ничего
+  // не даст и просто будет бесконечно листать список. В этом случае молча
+  // останавливаемся вместо бесконечного зацикливания.
   const LOAD_FAIL_STREAK_LIMIT = 3;
   el.audio.addEventListener("error", () => {
     if (state.transitioning) return; // не мешаем эмоциональному переходу
@@ -1538,24 +1465,12 @@
     renderPlayState();
 
     if (state.loadFailStreak >= LOAD_FAIL_STREAK_LIMIT){
-      showLoadErrorBanner();
       return; // не пытаемся играть дальше — все попытки подряд провалились
     }
 
     const track = TRACKS[state.currentIndex];
     showToast("Не удалось подключиться к «" + track.title + "» — пробуем следующую станцию");
     setTimeout(() => { if (!state.transitioning) nextTrack(); }, 1200);
-  });
-
-  function showLoadErrorBanner(){
-    el.loadErrorBanner.classList.add("show");
-  }
-  function hideLoadErrorBanner(){
-    el.loadErrorBanner.classList.remove("show");
-  }
-  el.closeLoadErrorBanner.addEventListener("click", () => {
-    hideLoadErrorBanner();
-    state.loadFailStreak = 0; // даём шанс попробовать снова вручную
   });
 
   /* ============================================================
